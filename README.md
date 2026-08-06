@@ -70,6 +70,180 @@ Planned work:
 - Add encrypted voice chat later
 - Design the backend so it can support WebRTC-based voice features in a future phase
 
+## Frontend-facing API contract
+
+The frontend can use the following endpoints and websocket events.
+
+### REST endpoints
+
+#### Health check
+
+- Method: `GET`
+- Path: `/health`
+- Response:
+  ```json
+  {
+    "status": "ok",
+    "service": "hermes-be",
+    "message": "Backend is running"
+  }
+  ```
+
+#### Register a user
+
+- Method: `POST`
+- Path: `/auth/register`
+- Body:
+  ```json
+  {
+    "username": "alice",
+    "password": "hunter2"
+  }
+  ```
+- Response:
+  ```json
+  {
+    "user": {
+      "id": 1,
+      "username": "alice"
+    }
+  }
+  ```
+
+#### Log in a user
+
+- Method: `POST`
+- Path: `/auth/login`
+- Body:
+  ```json
+  {
+    "username": "alice",
+    "password": "hunter2"
+  }
+  ```
+- Response:
+  ```json
+  {
+    "username": "alice",
+    "token": "<uuid>"
+  }
+  ```
+
+#### List messages for a room
+
+- Method: `GET`
+- Path: `/messages?room=general`
+- Response:
+  ```json
+  [
+    {
+      "id": 1,
+      "room": "general",
+      "sender": "alice",
+      "content": "hello",
+      "created_at": "2026-08-06T12:00:00.000Z"
+    }
+  ]
+  ```
+
+#### Create a message
+
+- Method: `POST`
+- Path: `/messages`
+- Body:
+  ```json
+  {
+    "room": "general",
+    "sender": "alice",
+    "content": "hello",
+    "token": "<token>"
+  }
+  ```
+- Response:
+  ```json
+  {
+    "id": 1,
+    "room": "general",
+    "sender": "alice",
+    "content": "hello",
+    "created_at": "2026-08-06T12:00:00.000Z"
+  }
+  ```
+
+### WebSocket endpoint
+
+- Path: `/ws`
+- The frontend should connect to this endpoint.
+
+#### Incoming websocket messages from the frontend
+
+##### Join a room
+
+```json
+{
+  "type": "join_room",
+  "room": "general",
+  "user": "alice"
+}
+```
+
+##### Send a message over websocket
+
+```json
+{
+  "type": "send_message",
+  "room": "general",
+  "sender": "alice",
+  "content": "hello"
+}
+```
+
+#### Outgoing websocket messages from the backend
+
+##### Connection confirmation
+
+```json
+{
+  "type": "connected",
+  "room": "general",
+  "user": "anonymous"
+}
+```
+
+##### Room join confirmation
+
+```json
+{
+  "type": "joined_room",
+  "room": "general",
+  "user": "alice"
+}
+```
+
+##### Message broadcast
+
+```json
+{
+  "type": "message",
+  "message": {
+    "id": 1,
+    "room": "general",
+    "sender": "alice",
+    "content": "hello",
+    "created_at": "2026-08-06T12:00:00.000Z"
+  }
+}
+```
+
+##### Error
+
+```json
+{
+  "type": "error",
+  "message": "Invalid message payload"
+}
+```
+
 ## Handoff note
 
 This project is intentionally small and private. The right implementation is a lightweight real-time backend with straightforward persistence, not a large-scale messaging platform.

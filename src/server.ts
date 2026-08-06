@@ -1,3 +1,4 @@
+import './runtime-compat';
 import Fastify, { FastifyRequest } from 'fastify';
 import websocket from '@fastify/websocket';
 import { createMessage, listMessages } from './db';
