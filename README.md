@@ -1,249 +1,130 @@
 # hermes-be
 
-## Project brief
+Private messenger backend for a small group of friends. Local network and Tailscale. One Node process, SQLite, Fastify.
 
-Hermes is a private messenger backend for a small group of friends. It should work over both a local network and a Tailscale private network. The initial focus is simplicity, privacy, and ease of setup rather than scalability.
+## Run
 
-## Goals
+```sh
+npm install
+npm run dev
+```
 
-- Provide a simple, secure, private messaging experience
-- Support local-network and Tailscale-based connectivity
-- Keep the backend easy to run and maintain for a single developer
-- Leave room for future voice chat support
+Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`). Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
 
-## Constraints
-
-- Small scale: roughly 5 users total
-- Avoid overengineering
-- Prefer a simple architecture over distributed systems
-- Treat security and privacy as core requirements
+```sh
+npm test
+npm run build
+```
 
 ## Current status
 
-The backend is now at a usable MVP stage for local testing and simple frontend integration.
+Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history.
 
-Implemented so far:
+## Auth
 
-- TypeScript backend using Node.js and Fastify
-- Health endpoint at `/health`
-- SQLite-backed message persistence
-- REST endpoints for reading and creating messages
-- WebSocket support for real-time messaging
-- Basic room-based websocket joining
-- Simple user registration and login flow
-- Token-based auth for basic access control
-- Regression tests for database and auth behavior
-- Build verified successfully with `npm run build`
+Login returns `{ username, token }`. Send the token as `Authorization: Bearer <token>` on REST. WebSocket handshake requires the same token via `Authorization: Bearer <token>` and/or `?token=`. Identity always comes from the token; client `user` / `sender` fields are ignored when a token is present.
 
-## What we will do in the next iteration
+Unauthenticated `/ws` upgrades are rejected (HTTP 401). Invalid tokens are rejected the same way.
 
-The next iteration is focused on making the backend easier to integrate with a simple frontend and to support the first real user flow.
+Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` returns 403.
 
-Planned work:
+## REST
 
-- Finalize a clean API and websocket contract for the frontend
-- Add file upload/download support
-- Add basic presence and online status handling
-- Improve room and user management for a more predictable experience
-- Add better documentation for endpoints and websocket events
-- Keep the architecture intentionally simple and local-first
+| Method | Path | Auth | Notes |
+|--------|------|------|--------|
+| GET | `/health` | no | |
+| POST | `/auth/register` | no | `{ username, password }` |
+| POST | `/auth/login` | no | `{ username, password }` → `{ username, token }` |
+| GET | `/rooms` | Bearer | `[{ id, slug, name, created_at, members }]` |
+| GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
+| POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Sender is the token username. |
+| POST | `/files` | Bearer | Multipart: field `room` first, then file field `file`. Max 25MB. Creates a message with `file_id`. |
+| GET | `/files/:id` | Bearer | Download if you are a member of the file's room. |
 
-## Recommended stack for the MVP
+`POST /messages` body:
 
-- TypeScript
-- Node.js
-- Fastify
-- WebSocket support for real-time messaging
-- SQLite for simple local persistence
+```json
+{
+  "room": "general",
+  "content": "hello",
+  "token": "<optional if Authorization is set>"
+}
+```
 
-## MVP features
+Response is a `MessageRecord`. That same object is broadcast on WebSocket as `{ "type": "message", "message": { ... } }`.
 
-- User authentication
-- Private and group chat rooms
-- Real-time message delivery
-- Message persistence
-- File sharing
-- Presence and online status
+File upload response:
 
-## Future roadmap
-
-- Add encrypted voice chat later
-- Design the backend so it can support WebRTC-based voice features in a future phase
-
-## Frontend-facing API contract
-
-The frontend can use the following endpoints and websocket events.
-
-### REST endpoints
-
-#### Health check
-
-- Method: `GET`
-- Path: `/health`
-- Response:
-  ```json
-  {
-    "status": "ok",
-    "service": "hermes-be",
-    "message": "Backend is running"
-  }
-  ```
-
-#### Register a user
-
-- Method: `POST`
-- Path: `/auth/register`
-- Body:
-  ```json
-  {
-    "username": "alice",
-    "password": "hunter2"
-  }
-  ```
-- Response:
-  ```json
-  {
-    "user": {
-      "id": 1,
-      "username": "alice"
-    }
-  }
-  ```
-
-#### Log in a user
-
-- Method: `POST`
-- Path: `/auth/login`
-- Body:
-  ```json
-  {
-    "username": "alice",
-    "password": "hunter2"
-  }
-  ```
-- Response:
-  ```json
-  {
-    "username": "alice",
-    "token": "<uuid>"
-  }
-  ```
-
-#### List messages for a room
-
-- Method: `GET`
-- Path: `/messages?room=general`
-- Response:
-  ```json
-  [
-    {
-      "id": 1,
-      "room": "general",
-      "sender": "alice",
-      "content": "hello",
-      "created_at": "2026-08-06T12:00:00.000Z"
-    }
-  ]
-  ```
-
-#### Create a message
-
-- Method: `POST`
-- Path: `/messages`
-- Body:
-  ```json
-  {
-    "room": "general",
-    "sender": "alice",
-    "content": "hello",
-    "token": "<token>"
-  }
-  ```
-- Response:
-  ```json
-  {
+```json
+{
+  "file": {
     "id": 1,
     "room": "general",
-    "sender": "alice",
-    "content": "hello",
-    "created_at": "2026-08-06T12:00:00.000Z"
-  }
-  ```
-
-### WebSocket endpoint
-
-- Path: `/ws`
-- The frontend should connect to this endpoint.
-
-#### Incoming websocket messages from the frontend
-
-##### Join a room
-
-```json
-{
-  "type": "join_room",
-  "room": "general",
-  "user": "alice"
-}
-```
-
-##### Send a message over websocket
-
-```json
-{
-  "type": "send_message",
-  "room": "general",
-  "sender": "alice",
-  "content": "hello"
-}
-```
-
-#### Outgoing websocket messages from the backend
-
-##### Connection confirmation
-
-```json
-{
-  "type": "connected",
-  "room": "general",
-  "user": "anonymous"
-}
-```
-
-##### Room join confirmation
-
-```json
-{
-  "type": "joined_room",
-  "room": "general",
-  "user": "alice"
-}
-```
-
-##### Message broadcast
-
-```json
-{
-  "type": "message",
+    "uploader": "alice",
+    "original_name": "notes.txt",
+    "mime": "text/plain",
+    "size": 12,
+    "created_at": "<iso>"
+  },
   "message": {
-    "id": 1,
+    "id": 2,
     "room": "general",
     "sender": "alice",
-    "content": "hello",
-    "created_at": "2026-08-06T12:00:00.000Z"
+    "content": "notes.txt",
+    "created_at": "<iso>",
+    "file_id": 1
   }
 }
 ```
 
-##### Error
+## WebSocket
+
+- Path: `/ws` (raw JSON text frames, not Socket.IO)
+- Connect: `ws://<host>/ws?token=<token>` (or Bearer on the handshake)
+
+The connection stays open after 101 until the client closes it or auth fails. Do not treat `open` alone as proof of join; wait for `connected`, then send `join_room`.
+
+### Client → server
 
 ```json
-{
-  "type": "error",
-  "message": "Invalid message payload"
-}
+{ "type": "join_room", "room": "general" }
 ```
 
-## Handoff note
+`user` is ignored. After a successful join the server sends `joined_room` then a `room_users` snapshot of **currently connected** members.
 
-This project is intentionally small and private. The right implementation is a lightweight real-time backend with straightforward persistence, not a large-scale messaging platform.
+```json
+{ "type": "send_message", "room": "general", "content": "hello" }
+```
+
+`send_message` does **not** insert a row. Persist with `POST /messages` only. The CLI currently POSTs and then sends `send_message`; the second call is ignored so history is not duplicated.
+
+### Server → client
+
+```json
+{ "type": "connected", "user": "alice" }
+{ "type": "joined_room", "room": "general" }
+{ "type": "room_users", "room": "general", "users": ["alice", "bob"] }
+{ "type": "user_joined", "room": "general", "user": "bob" }
+{ "type": "user_left", "room": "general", "user": "bob" }
+{ "type": "message", "message": { "id": 1, "room": "general", "sender": "alice", "content": "hello", "created_at": "<iso>", "file_id": null } }
+{ "type": "error", "content": "<reason>", "message": "<reason>" }
+```
+
+`error` uses `content` (and `message` with the same string for older CLIs).
+
+Live path: Alice `POST /messages` while Bob is joined to `general` → Bob receives `{ type: "message", message }` without rejoining.
+
+Heartbeats: server pings sockets about every 30s and drops peers that stop answering.
+
+## hermes-fe follow-up
+
+The CLI should:
+
+1. Put the login token on the WebSocket URL (`?token=`) and/or `Authorization` header. Until it does, `/ws` will 401 and live chat will look “offline.”
+2. Treat WebSocket `close` / 1006 as offline; on reconnect, send `join_room` again for the current room.
+3. Stop calling `send_message` after `POST /messages` (broadcast already happened).
+4. For files: `POST /files` with `room` + `file`, print `file_id` from the message, `GET /files/:id` to download.
+
+## Out of scope for now
+
+Voice / WebRTC, E2E encryption, clustered processes.
