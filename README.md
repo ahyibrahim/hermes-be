@@ -9,7 +9,9 @@ npm install
 npm run dev
 ```
 
-Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`). Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
+Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
+
+On startup the process migrates that SQLite file in place (`CREATE TABLE IF NOT EXISTS` does not change existing tables). After pulling this code, restart hermes-be on the host that serves `ying-1:3000` (or whatever `HERMES_BASE_URL` points at).
 
 ```sh
 npm test
@@ -128,3 +130,7 @@ The CLI should:
 ## Out of scope for now
 
 Voice / WebRTC, E2E encryption, clustered processes.
+
+## Later: deploy to the host
+
+The process and SQLite file live on a different machine from this repo (for example a Tailscale node). Today that means pull and restart on the host by hand. A later expansion is a tunnel (or similar) so we can deploy and restart directly on that machine from here, instead of copying commits over separately.

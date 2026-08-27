@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
+import { migrateSchema } from './schema';
 
 const dbPath = process.env.HERMES_DB_PATH
   ? path.resolve(process.env.HERMES_DB_PATH)
@@ -12,47 +13,7 @@ if (!fs.existsSync(dbDirectory)) {
 }
 
 const db = new Database(dbPath);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room TEXT NOT NULL,
-    sender TEXT NOT NULL,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS rooms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    slug TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS room_members (
-    room TEXT NOT NULL,
-    username TEXT NOT NULL,
-    PRIMARY KEY (room, username)
-  );
-
-  CREATE TABLE IF NOT EXISTS files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room TEXT NOT NULL,
-    uploader TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    path TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-const messageColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>;
-if (!messageColumns.some((column) => column.name === 'file_id')) {
-  db.exec('ALTER TABLE messages ADD COLUMN file_id INTEGER');
-}
-
-db.prepare('INSERT OR IGNORE INTO rooms (slug, name) VALUES (?, ?)').run('general', 'general');
+migrateSchema(db);
 
 export interface MessageRecord {
   id: number;
