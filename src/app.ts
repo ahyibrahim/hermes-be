@@ -19,6 +19,7 @@ import {
 } from './db';
 import { loginUser, registerUser } from './auth';
 import { findSessionUser } from './sessions';
+import { buildInfo } from './build-info';
 
 type RoomSocket = {
   socket: { readyState: number; send: (data: string) => void; ping?: () => void; terminate?: () => void };
@@ -181,11 +182,16 @@ export async function createApp(): Promise<{
     fs.mkdirSync(filesDir, { recursive: true });
   }
 
-  fastify.get('/health', async () => ({
-    status: 'ok',
-    service: 'hermes-be',
-    message: 'Backend is running',
-  }));
+  fastify.get('/health', async () => {
+    const { version, commit } = buildInfo();
+    return {
+      status: 'ok',
+      service: 'hermes-be',
+      message: 'Backend is running',
+      version,
+      commit,
+    };
+  });
 
   fastify.post('/auth/register', async (request, reply) => {
     const body = request.body as { username?: string; password?: string };
