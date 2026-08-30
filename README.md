@@ -11,6 +11,16 @@ npm run dev
 
 Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
 
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `3000` | Bind port, on `0.0.0.0`. |
+| `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. |
+| `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. |
+| `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Anything that is not a positive number falls back to 30. |
+| `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. Set by `scripts/deploy.sh`; falls back to asking git, then to `unknown`. |
+
+Production instances read these from `/etc/hermes/<instance>.env`. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
 On startup the process migrates that SQLite file in place (`CREATE TABLE IF NOT EXISTS` does not change existing tables). After pulling this code, restart hermes-be on the host that serves `ying-1:3000` (or whatever `HERMES_BASE_URL` points at).
 
 ```sh
@@ -28,9 +38,11 @@ Live room chat works for two authenticated clients without rejoining. `POST /mes
 
 ## Auth
 
-Login returns `{ username, token }`. Send the token as `Authorization: Bearer <token>` on REST. WebSocket handshake requires the same token via `Authorization: Bearer <token>` and/or `?token=`. Identity always comes from the token; client `user` / `sender` fields are ignored when a token is present.
+Login returns `{ username, token, expires_at }`. Send the token as `Authorization: Bearer <token>` on REST. WebSocket handshake requires the same token via `Authorization: Bearer <token>` and/or `?token=`. Identity always comes from the token; client `user` / `sender` fields are ignored when a token is present.
 
 Unauthenticated `/ws` upgrades are rejected (HTTP 401). Invalid tokens are rejected the same way.
+
+Sessions are rows in the `sessions` table, not process memory, so **a token survives a restart**. It expires `HERMES_SESSION_TTL_DAYS` after login (30 days by default); expired tokens are rejected and pruned. A client can persist the token and reuse it on next launch, and `expires_at` says how long that is worth doing.
 
 Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` returns 403.
 
@@ -38,14 +50,28 @@ Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` retur
 
 | Method | Path | Auth | Notes |
 |--------|------|------|--------|
-| GET | `/health` | no | |
+| GET | `/health` | no | `{ status, service, message, version, commit }` |
 | POST | `/auth/register` | no | `{ username, password }` |
-| POST | `/auth/login` | no | `{ username, password }` → `{ username, token }` |
+| POST | `/auth/login` | no | `{ username, password }` → `{ username, token, expires_at }` |
 | GET | `/rooms` | Bearer | `[{ id, slug, name, created_at, members }]` |
 | GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
 | POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Sender is the token username. |
 | POST | `/files` | Bearer | Multipart: field `room` first, then file field `file`. Max 25MB. Creates a message with `file_id`. |
 | GET | `/files/:id` | Bearer | Download if you are a member of the file's room. |
+
+`GET /health` response:
+
+```json
+{
+  "status": "ok",
+  "service": "hermes-be",
+  "message": "Backend is running",
+  "version": "0.3.0",
+  "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
+}
+```
+
+`version` is `package.json`'s. `commit` is `HERMES_GIT_COMMIT` when set (a deploy sets it), otherwise the checkout's `git rev-parse HEAD`, otherwise `unknown`. `/health` never fails because git is unavailable, so polling it is how a deploy is verified.
 
 `POST /messages` body:
 
@@ -131,6 +157,18 @@ The CLI should:
 3. Stop calling `send_message` after `POST /messages` (broadcast already happened).
 4. For files: `POST /files` with `room` + `file`, print `file_id` from the message, `GET /files/:id` to download.
 
+## Deploy
+
+[docs/DEPLOY.md](docs/DEPLOY.md) is the runbook. In short: the host runs `hermes-be@p1`, a systemd template unit under a `hermes` service user, with code in `/srv/hermes/p1/hermes-be` and data in `/var/lib/hermes/p1/` — deliberately not this checkout.
+
+```sh
+sudo ./scripts/setup-host.sh p1     # once, needs root
+sudo ./scripts/deploy.sh p1 v0.3.0  # per release
+journalctl -u hermes-be@p1 -f
+```
+
+`deploy.sh` checks out the tag, builds, restarts the unit and polls `/health` until it reports the version and commit it just deployed. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
+
 ## Roadmap
 
 [docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.8.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
@@ -138,7 +176,3 @@ The CLI should:
 ## Out of scope for now
 
 E2E encryption and clustered processes. Voice chat is planned for v0.8.0, browser only.
-
-## Later: deploy to the host
-
-The process and SQLite file live on a different machine from this repo (for example a Tailscale node). Today that means pull and restart on the host by hand. A later expansion is a tunnel (or similar) so we can deploy and restart directly on that machine from here, instead of copying commits over separately.
