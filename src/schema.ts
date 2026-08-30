@@ -26,6 +26,22 @@ function addColumnIfMissing(db: SqliteDb, table: string, column: string, definit
 
 export function migrateSchema(db: SqliteDb): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room TEXT NOT NULL DEFAULT 'general',
@@ -58,6 +74,11 @@ export function migrateSchema(db: SqliteDb): void {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Databases in the wild had `users` created by the old auth.ts code path rather
+  // than here, so treat every column as possibly absent.
+  addColumnIfMissing(db, 'users', 'created_at', "TEXT DEFAULT ''");
+  db.exec(`UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''`);
 
   addColumnIfMissing(db, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
   addColumnIfMissing(db, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");

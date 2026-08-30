@@ -1,27 +1,6 @@
 import crypto from 'node:crypto';
-import Database from 'better-sqlite3';
-import path from 'node:path';
-import fs from 'node:fs';
-
-const dbPath = process.env.HERMES_DB_PATH
-  ? path.resolve(process.env.HERMES_DB_PATH)
-  : path.resolve(process.cwd(), 'data', 'hermes.db');
-const dbDirectory = path.dirname(dbPath);
-
-if (!fs.existsSync(dbDirectory)) {
-  fs.mkdirSync(dbDirectory, { recursive: true });
-}
-
-const db = new Database(dbPath);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-`);
+import { getDb } from './database';
+import { createSession } from './sessions';
 
 export interface AuthUser {
   id: number;
@@ -32,6 +11,7 @@ export interface AuthUser {
 export interface AuthSession {
   username: string;
   token: string;
+  expires_at: string;
 }
 
 function hashPassword(password: string): string {
@@ -44,7 +24,7 @@ export function registerUser(username: string, password: string): AuthUser {
     throw new Error('username and password are required');
   }
 
-  const stmt = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)');
+  const stmt = getDb().prepare('INSERT INTO users (username, password) VALUES (?, ?)');
   const result = stmt.run(normalizedUsername, hashPassword(password));
 
   return {
@@ -56,15 +36,17 @@ export function registerUser(username: string, password: string): AuthUser {
 
 export function loginUser(username: string, password: string): AuthSession | null {
   const normalizedUsername = username.trim().toLowerCase();
-  const stmt = db.prepare('SELECT id, username, password FROM users WHERE username = ?');
+  const stmt = getDb().prepare('SELECT id, username, password FROM users WHERE username = ?');
   const user = stmt.get(normalizedUsername) as AuthUser | undefined;
 
   if (!user || user.password !== hashPassword(password)) {
     return null;
   }
 
+  const session = createSession(user.username);
   return {
-    username: user.username,
-    token: crypto.randomUUID(),
+    username: session.username,
+    token: session.token,
+    expires_at: session.expires_at,
   };
 }
