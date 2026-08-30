@@ -18,6 +18,7 @@ import {
   listRooms,
 } from './db';
 import { loginUser, registerUser } from './auth';
+import { findSessionUser } from './sessions';
 
 type RoomSocket = {
   socket: { readyState: number; send: (data: string) => void; ping?: () => void; terminate?: () => void };
@@ -106,11 +107,9 @@ function unwrapSocket(connection: unknown): any {
 
 export async function createApp(): Promise<{
   app: FastifyInstance;
-  userTokens: Map<string, string>;
   roomClients: Map<string, Set<RoomSocket>>;
 }> {
   const fastify = Fastify({ logger: false });
-  const userTokens = new Map<string, string>();
   const roomClients = new Map<string, Set<RoomSocket>>();
   const lastPong = new WeakMap<object, number>();
 
@@ -166,7 +165,7 @@ export async function createApp(): Promise<{
       return null;
     }
 
-    const username = userTokens.get(token);
+    const username = findSessionUser(token);
     if (!username) {
       reply.code(401);
       return null;
@@ -219,7 +218,6 @@ export async function createApp(): Promise<{
       return { error: 'invalid credentials' };
     }
 
-    userTokens.set(session.token, session.username);
     return session;
   });
 
@@ -280,7 +278,7 @@ export async function createApp(): Promise<{
     const token = extractToken(request);
     let username: string | undefined;
     if (token) {
-      username = userTokens.get(token);
+      username = findSessionUser(token) ?? undefined;
       if (!username) {
         reply.code(401);
         return { error: 'invalid token' };
@@ -397,7 +395,7 @@ export async function createApp(): Promise<{
       preHandler: async (request, reply) => {
         const token = extractBearer(request) ?? (request.query as { token?: string }).token;
         if (typeof token === 'string' && token.trim()) {
-          const username = userTokens.get(token.trim());
+          const username = findSessionUser(token);
           if (!username) {
             return reply.code(401).send({ error: 'authentication required' });
           }
@@ -456,7 +454,7 @@ export async function createApp(): Promise<{
           if (payload.type === 'join_room') {
             if (!user) {
               const joinToken = typeof payload.token === 'string' ? payload.token.trim() : '';
-              const username = joinToken ? userTokens.get(joinToken) : undefined;
+              const username = joinToken ? findSessionUser(joinToken) : null;
               if (!username) {
                 sendJson(socket, errorFrame('authentication required'));
                 socket.close?.();
@@ -545,5 +543,5 @@ export async function createApp(): Promise<{
     clearInterval(pingTimer);
   });
 
-  return { app: fastify, userTokens, roomClients };
+  return { app: fastify, roomClients };
 }
