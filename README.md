@@ -18,6 +18,10 @@ npm test
 npm run build
 ```
 
+`npm test` runs the self-contained `node:test` files under `src/`. They boot what they need and write to temporary databases, so they never touch `data/`.
+
+`npm run test:integration` is separate and is **not** part of `npm test`. It runs `test/integration/integration.spec.ts`, which is a specification for the v0.6.0 API surface rather than a regression test: it needs a hermes-be already listening on port 3456 (override with `PORT`) and asserts against endpoints that do not exist yet, so it fails against the current server by design. Give it a throwaway `HERMES_DB_PATH`.
+
 ## Current status
 
 Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history.
@@ -127,9 +131,13 @@ The CLI should:
 3. Stop calling `send_message` after `POST /messages` (broadcast already happened).
 4. For files: `POST /files` with `room` + `file`, print `file_id` from the message, `GET /files/:id` to download.
 
+## Roadmap
+
+[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.8.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
+
 ## Out of scope for now
 
-Voice / WebRTC, E2E encryption, clustered processes.
+E2E encryption and clustered processes. Voice chat is planned for v0.8.0, browser only.
 
 ## Later: deploy to the host
 
