@@ -1,0 +1,47 @@
+# SECURITY BOUNDARY - DO NOT CHANGE `runs-on` (see docs/adr/0002-deployment-topology.md).
+#
+# This workflow must always run on the GitHub-hosted `ubuntu-latest` runner. It
+# must NEVER be moved to the self-hosted runner introduced in v0.5.0.
+#
+# hermes-be is a PUBLIC repository, and this workflow has a `pull_request`
+# trigger. On a self-hosted runner that combination means anyone in the world
+# could open a pull request from a fork whose workflow executes arbitrary code
+# on the host, as the runner user, on the machine that holds the live message
+# database. The self-hosted runner is reserved for the `release: published` and
+# `workflow_dispatch` deploy workflow, neither of which a fork can fire.
+#
+# Rule: test and build workflows are pinned to `ubuntu-latest`; only deploy runs
+# self-hosted, and deploy never gets a `pull_request` trigger.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # better-sqlite3 is a native module. `npm ci` fetches a prebuilt binary
+      # for the matrix Node version where one exists and otherwise compiles it
+      # with node-gyp; the ubuntu-latest image already provides python3 and
+      # build-essential, so no extra setup step is needed here.
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm test
