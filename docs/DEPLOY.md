@@ -142,6 +142,7 @@ template, carrying `p1`'s values.
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. Must be inside the unit's `ReadWritePaths`. `p1` uses `/var/lib/hermes/p1/hermes.db`. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. `p1` uses `/var/lib/hermes/p1/files`. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Values that are not a positive number fall back to the default. |
+| `LOG_LEVEL` | `info` | Pino level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`. JSON to stdout. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. `deploy.sh` rewrites this on every deploy; no need to set it by hand. Unset means `/health` asks git, then reports `unknown`. |
 | `HERMES_WEB_DIR` | unset | Static web bundle directory. **Arrives in v0.4.0** and is commented out in the example; unset is a no-op. |
 
@@ -154,17 +155,38 @@ substitution, and quotes are only needed for values containing spaces.
 
 ## Service status and logs
 
+hermes-be logs JSON to stdout. The unit's stdout is journald, which owns
+retention; there are no log files and no logrotate config. Each request line
+carries a `reqId`. Domain events (login, websocket, room join, file upload,
+each `migrateSchema()` step) are logged at `info` and never include a password,
+a token, message content, or file contents.
+
+Pretty-print is local-only: `pino-pretty` is a **devDependency**, and it is
+used only when stdout is a TTY (`npm run dev` in a terminal). systemd never
+attaches a TTY, so `journalctl` always sees JSON.
+
 ```sh
 systemctl status hermes-be@p1
 journalctl -u hermes-be@p1 -f              # follow
 journalctl -u hermes-be@p1 -n 100 --no-pager
 journalctl -u hermes-be@p1 --since "1 hour ago"
+journalctl -u hermes-be@p1 -o cat          # JSON lines, no journald prefix
+journalctl -u hermes-be@p1 | grep login_failure
 ```
+
+Change the level by editing `LOG_LEVEL` in `/etc/hermes/p1.env` and restarting:
 
 ```sh
 sudo systemctl restart hermes-be@p1        # also re-runs migrations
 sudo systemctl stop hermes-be@p1
 ```
+
+`info` is the default and is what production should run. `debug` is noisier
+request logging; `silent` turns the logger off, which is what `npm test` uses.
+
+What is **not** logged: the `Authorization` header, the `token` query
+parameter, any `password` field, message bodies, and uploaded file bytes.
+Those are redacted or never written, so they must not appear in journald.
 
 The unit restarts on failure with a 5 second backoff and gives up after 5 failed
 starts in 5 minutes, so a service that is down and staying down means

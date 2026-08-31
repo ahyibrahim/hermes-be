@@ -17,6 +17,7 @@ Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `f
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Anything that is not a positive number falls back to 30. |
+| `LOG_LEVEL` | `info` | Pino level (`fatal` … `silent`). JSON to stdout; pretty-print only on a TTY. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. Set by `scripts/deploy.sh`; falls back to asking git, then to `unknown`. |
 
 Production instances read these from `/etc/hermes/<instance>.env`. See [docs/DEPLOY.md](docs/DEPLOY.md).
