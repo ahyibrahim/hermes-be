@@ -1,13 +1,16 @@
 {
   "name": "hermes-be",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "test:integration": "tsx test/integration/integration.spec.ts"
   },
+  "//test": "npm test runs only self-contained node:test files under src/. It boots what it needs and uses temporary databases.",
+  "//test:integration": "npm run test:integration is NOT part of npm test. It requires a hermes-be already listening on port 3456 (override with PORT) and targets the v0.6.0 API surface, so it fails against the current server by design. Point it at a throwaway HERMES_DB_PATH, never at real history.",
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
     "@fastify/websocket": "^10.0.0",

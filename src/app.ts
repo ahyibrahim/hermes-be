@@ -504,8 +504,10 @@ export async function createApp(): Promise<{
           }
 
           sendJson(socket, errorFrame('unknown message type'));
-        } catch {
-          sendJson(socket, errorFrame('Invalid message payload'));
+        } catch (error) {
+          const content =
+            error instanceof SyntaxError ? 'Invalid message payload' : (error as Error).message;
+          sendJson(socket, errorFrame(content));
         }
       });
 

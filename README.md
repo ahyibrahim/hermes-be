@@ -9,12 +9,18 @@ npm install
 npm run dev
 ```
 
-Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`). Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
+Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
+
+On startup the process migrates that SQLite file in place (`CREATE TABLE IF NOT EXISTS` does not change existing tables). After pulling this code, restart hermes-be on the host that serves `ying-1:3000` (or whatever `HERMES_BASE_URL` points at).
 
 ```sh
 npm test
 npm run build
 ```
+
+`npm test` runs the self-contained `node:test` files under `src/`. They boot what they need and write to temporary databases, so they never touch `data/`.
+
+`npm run test:integration` is separate and is **not** part of `npm test`. It runs `test/integration/integration.spec.ts`, which is a specification for the v0.6.0 API surface rather than a regression test: it needs a hermes-be already listening on port 3456 (override with `PORT`) and asserts against endpoints that do not exist yet, so it fails against the current server by design. Give it a throwaway `HERMES_DB_PATH`.
 
 ## Current status
 
@@ -125,6 +131,14 @@ The CLI should:
 3. Stop calling `send_message` after `POST /messages` (broadcast already happened).
 4. For files: `POST /files` with `room` + `file`, print `file_id` from the message, `GET /files/:id` to download.
 
+## Roadmap
+
+[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.8.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
+
 ## Out of scope for now
 
-Voice / WebRTC, E2E encryption, clustered processes.
+E2E encryption and clustered processes. Voice chat is planned for v0.8.0, browser only.
+
+## Later: deploy to the host
+
+The process and SQLite file live on a different machine from this repo (for example a Tailscale node). Today that means pull and restart on the host by hand. A later expansion is a tunnel (or similar) so we can deploy and restart directly on that machine from here, instead of copying commits over separately.
