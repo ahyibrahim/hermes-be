@@ -2,6 +2,7 @@ import './runtime-compat';
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -37,6 +38,54 @@ const FILE_SIZE_LIMIT = 25 * 1024 * 1024;
 const filesDir = process.env.HERMES_FILES_DIR
   ? path.resolve(process.env.HERMES_FILES_DIR)
   : path.resolve(process.cwd(), 'data', 'files');
+
+// Exact prefixes of the REST/WS surface. `/rooms-ui` is a client route and
+// must not match `/rooms`. Trailing-slash and nested paths (`/files/1`) do.
+const API_PATH_PREFIXES = ['/health', '/auth', '/rooms', '/messages', '/files', '/ws'];
+
+function isApiRequestPath(url: string): boolean {
+  const pathname = url.split('?')[0] || '/';
+  return API_PATH_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+  );
+}
+
+function isDocumentNavigation(request: FastifyRequest): boolean {
+  if (request.method !== 'GET') {
+    return false;
+  }
+  const accept = request.headers.accept;
+  return typeof accept === 'string' && accept.includes('text/html');
+}
+
+async function maybeServeWebBundle(fastify: FastifyInstance): Promise<void> {
+  const raw = process.env.HERMES_WEB_DIR;
+  if (raw === undefined || raw.trim() === '') {
+    return;
+  }
+
+  const webDir = path.resolve(raw.trim());
+  try {
+    if (!fs.statSync(webDir).isDirectory()) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  await fastify.register(fastifyStatic, {
+    root: webDir,
+    prefix: '/',
+  });
+
+  fastify.setNotFoundHandler((request, reply) => {
+    if (isDocumentNavigation(request) && !isApiRequestPath(request.url)) {
+      return reply.sendFile('index.html');
+    }
+    reply.code(404);
+    return { error: 'Not Found' };
+  });
+}
 
 function sendJson(socket: { readyState?: number; send: (data: string) => void }, payload: unknown): boolean {
   try {
@@ -597,6 +646,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       });
     }
   );
+
+  await maybeServeWebBundle(fastify);
 
   const pingTimer = setInterval(() => {
     const now = Date.now();
