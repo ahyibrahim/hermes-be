@@ -37,16 +37,19 @@ Open `http://127.0.0.1:3000`. There is no frontend `npm start` — that command 
 
 Production instances read these from `/etc/hermes/<instance>.env`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
-On startup the process migrates that SQLite file in place (`CREATE TABLE IF NOT EXISTS` does not change existing tables). After pulling this code, restart hermes-be on the host that serves `ying-1:3000` (or whatever `HERMES_BASE_URL` points at).
+On startup the process migrates that SQLite file in place. Additive changes
+(`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN`) leave existing tables alone; v0.6.0
+also rewrites `room_members` to foreign keys. After pulling this code, restart
+hermes-be on the host that serves `ying-1:3000` (or whatever `HERMES_BASE_URL`
+points at). Rehearse that rewrite on `s1` before `p1` — see
+[docs/DEPLOY.md](docs/DEPLOY.md#v060-s1-rehearsal-and-p1-backup).
 
 ```sh
 npm test
 npm run build
 ```
 
-`npm test` runs the self-contained `node:test` files under `src/`. They boot what they need and write to temporary databases, so they never touch `data/`.
-
-`npm run test:integration` is separate and is **not** part of `npm test`. It runs `test/integration/integration.spec.ts`, which is a specification for the v0.6.0 API surface rather than a regression test: it needs a hermes-be already listening on port 3456 (override with `PORT`) and asserts against endpoints that do not exist yet, so it fails against the current server by design. Give it a throwaway `HERMES_DB_PATH`.
+`npm test` runs the self-contained `node:test` files under `src/`. They boot what they need and write to temporary databases, so they never touch `data/`. That includes `src/v06-api.test.ts` (users, rooms, DMs, logout). `npm run test:integration` runs the same file.
 
 ## Current status
 
@@ -60,7 +63,7 @@ Unauthenticated `/ws` upgrades are rejected (HTTP 401). Invalid tokens are rejec
 
 Sessions are rows in the `sessions` table, not process memory, so **a token survives a restart**. It expires `HERMES_SESSION_TTL_DAYS` after login (30 days by default); expired tokens are rejected and pruned. A client can persist the token and reuse it on next launch, and `expires_at` says how long that is worth doing.
 
-Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` returns 403.
+Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messages?room=1` returns 403. New users are added to `general`. `GET /rooms` only returns rooms the caller belongs to, and includes `type` (`group` or `dm`).
 
 ## REST
 
@@ -69,7 +72,12 @@ Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` retur
 | GET | `/health` | no | `{ status, service, message, version, commit }` |
 | POST | `/auth/register` | no | `{ username, password }` |
 | POST | `/auth/login` | no | `{ username, password }` → `{ username, token, expires_at }` |
-| GET | `/rooms` | Bearer | `[{ id, slug, name, created_at, members }]` |
+| GET | `/rooms` | Bearer | Membership-filtered `[{ id, slug, name, type, created_at, members }]` |
+| POST | `/rooms` | Bearer | `{ name, members?: number[] }` → group room. Creator is always a member. |
+| POST | `/rooms/dm` | Bearer | `{ userId }` → existing or new DM. Idempotent. 400 for self-DM. |
+| GET | `/users` | Bearer | `[{ id, username }]` |
+| GET | `/users/online` | Bearer | Usernames with an open WebSocket, sorted. |
+| POST | `/auth/logout` | Bearer | Deletes the current session. `{ ok: true }` |
 | GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
 | POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Sender is the token username. |
 | POST | `/files` | Bearer | Multipart: field `room` first, then file field `file`. Max 25MB. Creates a message with `file_id`. |
@@ -82,7 +90,7 @@ Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` retur
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```

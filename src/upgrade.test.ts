@@ -27,10 +27,11 @@ function seedPreV030Database(dbPath: string, options: { usersCreatedAt: boolean 
     'legacy',
     'history from before the upgrade'
   );
-  db.prepare('INSERT OR IGNORE INTO room_members (room, username) VALUES (?, ?)').run('general', 'legacy');
 
   // Roll the two v0.3.0 changes back: sessions did not exist, and `users` was
-  // whatever the old auth.ts happened to create.
+  // whatever the old auth.ts happened to create. Drop membership first so
+  // foreign keys do not block dropping users.
+  db.exec('DELETE FROM room_members');
   db.exec('DROP TABLE sessions');
   db.exec('DROP TABLE users');
   db.exec(

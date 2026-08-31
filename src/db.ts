@@ -1,6 +1,15 @@
 import { getDb } from './database';
+import {
+  addRoomMember as addRoomMemberByNames,
+  ensureRoom as ensureTypedRoom,
+  getRoomBySlug as getTypedRoomBySlug,
+  isRoomMember as isNamedRoomMember,
+  listRoomMembers as listNamedRoomMembers,
+  RoomRecord as TypedRoomRecord,
+} from './rooms';
 
 export { closeDb, resolveDatabasePath } from './database';
+export type { RoomRecord } from './rooms';
 
 export interface MessageRecord {
   id: number;
@@ -9,14 +18,6 @@ export interface MessageRecord {
   content: string;
   created_at: string;
   file_id?: number | null;
-}
-
-export interface RoomRecord {
-  id: number;
-  slug: string;
-  name: string;
-  created_at: string;
-  members?: string[];
 }
 
 export interface FileRecord {
@@ -60,42 +61,24 @@ export function createMessage(
   };
 }
 
-export function ensureRoom(slug: string, name = slug): RoomRecord {
-  getDb().prepare('INSERT OR IGNORE INTO rooms (slug, name) VALUES (?, ?)').run(slug, name);
-  return getRoomBySlug(slug) as RoomRecord;
+export function ensureRoom(slug: string, name = slug): TypedRoomRecord {
+  return ensureTypedRoom(slug, name);
 }
 
-export function getRoomBySlug(slug: string): RoomRecord | undefined {
-  return getDb().prepare('SELECT id, slug, name, created_at FROM rooms WHERE slug = ?').get(slug) as
-    | RoomRecord
-    | undefined;
+export function getRoomBySlug(slug: string): TypedRoomRecord | undefined {
+  return getTypedRoomBySlug(slug);
 }
 
 export function addRoomMember(slug: string, username: string): void {
-  ensureRoom(slug);
-  getDb()
-    .prepare('INSERT OR IGNORE INTO room_members (room, username) VALUES (?, ?)')
-    .run(slug, username);
+  addRoomMemberByNames(slug, username);
 }
 
 export function isRoomMember(slug: string, username: string): boolean {
-  const row = getDb()
-    .prepare('SELECT 1 AS ok FROM room_members WHERE room = ? AND username = ?')
-    .get(slug, username) as { ok: number } | undefined;
-  return Boolean(row);
+  return isNamedRoomMember(slug, username);
 }
 
 export function listRoomMembers(slug: string): string[] {
-  const rows = getDb()
-    .prepare('SELECT username FROM room_members WHERE room = ? ORDER BY username ASC')
-    .all(slug) as Array<{ username: string }>;
-  return rows.map((row) => row.username);
-}
-
-export function listRooms(): RoomRecord[] {
-  return getDb()
-    .prepare('SELECT id, slug, name, created_at FROM rooms ORDER BY id ASC')
-    .all() as RoomRecord[];
+  return listNamedRoomMembers(slug);
 }
 
 export function createFileRecord(
