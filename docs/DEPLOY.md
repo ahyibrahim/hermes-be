@@ -194,13 +194,88 @@ unset unless you know there is a database worth carrying over.
 ### Migrations
 
 There is no separate migrate command. `migrateSchema()` runs on every process
-start, so **restarting the service is the migration**. Every schema change up to
-v0.6.0 is additive (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN`), which is what
+start, so **restarting the service is the migration**. Schema changes through
+v0.4.0 are additive (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN`), which is what
 makes redeploying an older tag a safe rollback without a restore.
 
-The one exception is called out in the roadmap: take a manual copy of `p1`'s
-`hermes.db` immediately before the v0.6.0 membership migration, which rewrites
-message history in place.
+v0.6.0 is the exception: it rewrites `room_members` from slug+username to
+`room_id`/`user_id` foreign keys, adds `rooms.type`, and backfills every user
+into `general`. Redeploying v0.4.0 after that rewrite will not restore the old
+membership table. Rehearse on `s1` and copy `p1`'s database first — see
+[v0.6.0: s1 rehearsal](#v060-s1-rehearsal-and-p1-backup).
+
+### v0.6.0: s1 rehearsal and p1 backup
+
+Do this **before** deploying v0.6.0 to `p1`. `s1` is a second systemd instance
+on a different port, seeded from a copy of live data, so the membership rewrite
+can fail without touching production. This is a runbook, not something to
+script: `setup-host.sh` and `deploy.sh` still need root, and they are still
+invoked by hand.
+
+`p1` stays on port 3000. Give `s1` **3001**.
+
+1. **Stand up `s1` once** (creates dirs, env file, enables the unit; does not
+   start it or overwrite an existing env file):
+
+   ```sh
+   cd /home/ai/Workspace/hermes-be
+   sudo ./scripts/setup-host.sh s1
+   ```
+
+   Edit `/etc/hermes/s1.env` and set `PORT=3001`. Paths should already point at
+   `/var/lib/hermes/s1/` (setup rewrites the example's `p1` paths). Leave
+   `HERMES_WEB_DIR=/var/lib/hermes/s1/web`.
+
+2. **Copy `p1`'s data into `s1` while SQLite is quiet.** Stop production
+   briefly, copy, start it again. `HERMES_SEED_FROM` on setup only copies when
+   the destination database does not exist, so this is the path after setup
+   already created `/var/lib/hermes/s1/`.
+
+   ```sh
+   sudo systemctl stop hermes-be@p1
+   sudo cp -a /var/lib/hermes/p1/hermes.db /var/lib/hermes/s1/hermes.db
+   sudo cp -a /var/lib/hermes/p1/files/. /var/lib/hermes/s1/files/
+   sudo chown -R hermes:hermes /var/lib/hermes/s1
+   sudo systemctl start hermes-be@p1
+   ```
+
+   `s1` now has a pre-migration snapshot. `p1` is still on v0.4.0.
+
+3. **Deploy the v0.6.0 tag to `s1` only**, with a matching hermes-fe bundle:
+
+   ```sh
+   cd /home/ai/Workspace/hermes-fe && npm run build
+   cd /home/ai/Workspace/hermes-be
+   sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
+     ./scripts/deploy.sh s1 v0.6.0
+   ```
+
+   Confirm `curl -s http://127.0.0.1:3001/health` reports `0.6.0`. Open
+   `http://ying-1:3001`, log in as a real user, check existing `general`
+   history, create a group room, start a DM, sign out. Watch
+   `journalctl -u hermes-be@s1 -n 80` for `rewrote room_members to
+   room_id+user_id`.
+
+4. **Copy `p1`'s database again immediately before the production deploy.**
+   There is no backup step in `deploy.sh`. Stop `p1`, keep a dated copy next
+   to the live file, start `p1` only if you are not deploying in the same
+   breath; otherwise go straight to `deploy.sh p1`.
+
+   ```sh
+   sudo systemctl stop hermes-be@p1
+   sudo cp -a /var/lib/hermes/p1/hermes.db \
+     /var/lib/hermes/p1/hermes.db.pre-v0.6.0
+   sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
+     ./scripts/deploy.sh p1 v0.6.0
+   ```
+
+   `deploy.sh` starts the unit. Confirm `http://127.0.0.1:3000/health` and the
+   same login/history/room/DM checks on `http://ying-1:3000`.
+
+If `s1` looks wrong, do not deploy `p1`. `s1` can be torn down later
+(`systemctl disable --now hermes-be@s1` and remove `/var/lib/hermes/s1` once
+you are sure). Restoring `p1` from `hermes.db.pre-v0.6.0` is a stop, copy
+back, start — only needed if the production migration itself goes badly.
 
 ### Rolling back
 

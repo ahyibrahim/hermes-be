@@ -262,17 +262,14 @@ runner or add `runs-on: self-hosted` until that issue is closed. Manual
 
 ## v0.6.0 - Rooms and users
 
-- Stand up the `s1` instance first: one env file, `/var/lib/hermes/s1/` seeded
-  from a copy of `p1`'s database and files, `systemctl enable hermes-be@s1`.
-  Rehearse the migration there and verify existing history survives before
-  touching `p1`.
-- Take a manual copy of `p1`'s `hermes.db` immediately before the production
-  migration run. There is no automated backup in `deploy.sh` by choice, so this
-  in-place rewrite of live message history is the one moment that needs a
-  deliberate one.
-- Land the `feat/rooms-dm` branch: group rooms and DMs with membership by
-  `user_id`, plus a real migration from the slug-and-username `room_members` to
-  the FK model, including a backfill for existing rows.
+- Stand up the `s1` instance first and copy `p1`'s `hermes.db` immediately
+  before the production migration. Commands are in
+  [docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup). Do not treat
+  this as optional: the membership rewrite is not additive.
+- Group rooms and DMs with membership by `user_id`, plus a real migration from
+  the slug-and-username `room_members` to the FK model, including a backfill
+  for existing rows. (The parked `feat/rooms-dm` branch is too old to merge;
+  this was reimplemented against current `main`.)
 - New endpoints: `GET /users`, `GET /users/online`, `POST /rooms`,
   `POST /rooms/dm`, `POST /auth/logout`.
 - Web UI: create a room, start a DM, browse users.

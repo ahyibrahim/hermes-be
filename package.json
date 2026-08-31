@@ -1,16 +1,16 @@
 {
   "name": "hermes-be",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "LOG_LEVEL=silent tsx --test src/*.test.ts",
-    "test:integration": "tsx test/integration/integration.spec.ts"
+    "test:integration": "LOG_LEVEL=silent tsx --test src/v06-api.test.ts"
   },
   "//test": "npm test runs only self-contained node:test files under src/. It boots what it needs and uses temporary databases. LOG_LEVEL=silent keeps Pino off so the TAP output stays readable; logger.test.ts overrides the level when it captures logs.",
-  "//test:integration": "npm run test:integration is NOT part of npm test. It requires a hermes-be already listening on port 3456 (override with PORT) and targets the v0.6.0 API surface, so it fails against the current server by design. Point it at a throwaway HERMES_DB_PATH, never at real history.",
+  "//test:integration": "Runs src/v06-api.test.ts (also part of npm test). The old live-server script is a historical note in test/integration/integration.spec.ts.",
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
     "@fastify/static": "^7.0.4",

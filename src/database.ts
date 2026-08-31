@@ -29,6 +29,7 @@ export function getDb(log?: SchemaLogger): SqliteDb {
   }
 
   const db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
   migrateSchema(db, log);
   handle = db;
   return handle;

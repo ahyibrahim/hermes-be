@@ -16,11 +16,18 @@ import {
   isRoomMember,
   listMessages,
   listRoomMembers,
-  listRooms,
 } from './db';
+import {
+  addUserToGeneralRoom,
+  createGroupRoom,
+  getOrCreateDmRoom,
+  getUserByUsername,
+  listRoomsForUser,
+  listUsers,
+} from './rooms';
 import { loginUser, registerUser } from './auth';
 import { getDb } from './database';
-import { findSessionUser } from './sessions';
+import { deleteSession, findSessionUser } from './sessions';
 import { buildInfo } from './build-info';
 import { buildLoggerConfig, type LogDestination } from './logger';
 
@@ -41,7 +48,7 @@ const filesDir = process.env.HERMES_FILES_DIR
 
 // Exact prefixes of the REST/WS surface. `/rooms-ui` is a client route and
 // must not match `/rooms`. Trailing-slash and nested paths (`/files/1`) do.
-const API_PATH_PREFIXES = ['/health', '/auth', '/rooms', '/messages', '/files', '/ws'];
+const API_PATH_PREFIXES = ['/health', '/auth', '/rooms', '/messages', '/files', '/ws', '/users'];
 
 function isApiRequestPath(url: string): boolean {
   const pathname = url.split('?')[0] || '/';
@@ -284,6 +291,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
     try {
       const user = registerUser(body.username, body.password);
+      addUserToGeneralRoom(user.id);
       return { user: { id: user.id, username: user.username } };
     } catch (error) {
       reply.code(409);
@@ -313,24 +321,119 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return session;
   });
 
+  fastify.post('/auth/logout', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    deleteSession(extractToken(request));
+    request.log.info({ event: 'logout', username }, 'logged out');
+    return { ok: true };
+  });
+
+  fastify.get('/users', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    return listUsers();
+  });
+
+  fastify.get('/users/online', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const online = new Set<string>();
+    for (const clients of roomClients.values()) {
+      for (const client of clients) {
+        online.add(client.user);
+      }
+    }
+    return [...online].sort((a, b) => a.localeCompare(b));
+  });
+
   fastify.get('/rooms', async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
       return { error: 'authentication required' };
     }
 
-    return listRooms().map((room) => {
+    return listRoomsForUser(username).map((room) => {
       const connected = connectedUsers(room.slug);
-      const stored = listRoomMembers(room.slug);
-      const members = [...new Set([...connected, ...stored])].sort((a, b) => a.localeCompare(b));
+      const members = [...new Set([...connected, ...room.members])].sort((a, b) => a.localeCompare(b));
       return {
         id: room.id,
         slug: room.slug,
         name: room.name,
+        type: room.type,
         created_at: room.created_at,
         members,
       };
     });
+  });
+
+  fastify.post('/rooms', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const me = getUserByUsername(username);
+    if (!me) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { name?: string; members?: unknown };
+    if (!body.name || typeof body.name !== 'string' || !body.name.trim()) {
+      reply.code(400);
+      return { error: 'name is required' };
+    }
+
+    const memberIds = Array.isArray(body.members)
+      ? body.members.filter((id): id is number => typeof id === 'number' && Number.isInteger(id))
+      : [];
+
+    const room = createGroupRoom(body.name, me.id, memberIds);
+    request.log.info({ event: 'room_create', user: username, room: room.slug }, 'created group room');
+    return room;
+  });
+
+  fastify.post('/rooms/dm', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const me = getUserByUsername(username);
+    if (!me) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { userId?: unknown };
+    if (typeof body.userId !== 'number' || !Number.isInteger(body.userId)) {
+      reply.code(400);
+      return { error: 'userId is required' };
+    }
+
+    if (body.userId === me.id) {
+      reply.code(400);
+      return { error: 'cannot DM yourself' };
+    }
+
+    try {
+      const room = getOrCreateDmRoom(me.id, body.userId);
+      request.log.info({ event: 'room_dm', user: username, room: room.slug }, 'opened DM');
+      return room;
+    } catch (error) {
+      reply.code(400);
+      return { error: (error as Error).message };
+    }
   });
 
   fastify.get('/messages', async (request: FastifyRequest<{ Querystring: { room?: string } }>, reply) => {
@@ -356,7 +459,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   fastify.post('/messages', async (request, reply) => {
     const body = request.body as { room?: string; sender?: string; content?: string; token?: string };
 
-    if (!body.room || !body.content) {
+    if (!body.room || typeof body.content !== 'string' || !body.content.trim()) {
       reply.code(400);
       return { error: 'room and content are required' };
     }
@@ -385,7 +488,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
 
     addRoomMember(slug, username);
-    const message = createMessage(slug, username, body.content);
+    const message = createMessage(slug, username, body.content.trim());
     broadcastToRoom(slug, { type: 'message', message });
     return message;
   });

@@ -111,6 +111,99 @@ function backfillEmpty(
   );
 }
 
+const FK_MEMBERS_DDL = `CREATE TABLE room_members (
+      room_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (room_id, user_id),
+      FOREIGN KEY (room_id) REFERENCES rooms(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )`;
+
+function migrateRoomMembers(db: SqliteDb, log: SchemaLogger): void {
+  if (!tableExists(db, 'room_members')) {
+    db.exec(FK_MEMBERS_DDL);
+    note(log, true, 'create_table', { table: 'room_members' }, 'created table room_members');
+    return;
+  }
+
+  const cols = columnNames(db, 'room_members');
+  const isFk = cols.has('room_id') && cols.has('user_id');
+  const isSlug = cols.has('room') && cols.has('username');
+
+  if (isFk && !isSlug) {
+    addColumnIfMissing(db, log, 'room_members', 'joined_at', "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    note(
+      log,
+      false,
+      'rebuild_table',
+      { table: 'room_members' },
+      'room_members already uses room_id+user_id'
+    );
+    return;
+  }
+
+  if (isSlug) {
+    db.exec('DROP TABLE IF EXISTS room_members_new');
+    db.exec(FK_MEMBERS_DDL.replace('CREATE TABLE room_members', 'CREATE TABLE room_members_new'));
+    const inserted = db
+      .prepare(
+        `INSERT OR IGNORE INTO room_members_new (room_id, user_id)
+         SELECT r.id, u.id
+         FROM room_members old
+         JOIN rooms r ON r.slug = old.room
+         JOIN users u ON u.username = old.username`
+      )
+      .run();
+    db.exec('DROP TABLE room_members');
+    db.exec('ALTER TABLE room_members_new RENAME TO room_members');
+    note(
+      log,
+      true,
+      'rebuild_table',
+      { table: 'room_members', changes: inserted.changes },
+      `rewrote room_members to room_id+user_id (${inserted.changes} row(s))`
+    );
+    return;
+  }
+
+  db.exec('DROP TABLE room_members');
+  db.exec(FK_MEMBERS_DDL);
+  note(
+    log,
+    true,
+    'rebuild_table',
+    { table: 'room_members' },
+    'replaced unrecognised room_members shape with room_id+user_id'
+  );
+}
+
+function backfillGeneralMembership(db: SqliteDb, log: SchemaLogger): void {
+  const general = db.prepare("SELECT id FROM rooms WHERE slug = 'general'").get() as
+    | { id: number }
+    | undefined;
+  if (!general) {
+    note(log, false, 'backfill', { table: 'room_members' }, 'no general room to backfill into');
+    return;
+  }
+
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO room_members (room_id, user_id)
+       SELECT ?, id FROM users`
+    )
+    .run(general.id);
+  note(
+    log,
+    result.changes > 0,
+    'backfill',
+    { table: 'room_members', room: 'general', changes: result.changes },
+    result.changes > 0
+      ? `added ${result.changes} user(s) to general`
+      : 'every user is already in general'
+  );
+}
+
 export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): void {
   ensureTable(
     db,
@@ -164,20 +257,12 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'group' CHECK(type IN ('group', 'dm')),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   );
 
-  ensureTable(
-    db,
-    log,
-    'room_members',
-    `CREATE TABLE IF NOT EXISTS room_members (
-      room TEXT NOT NULL,
-      username TEXT NOT NULL,
-      PRIMARY KEY (room, username)
-    )`
-  );
+  addColumnIfMissing(db, log, 'rooms', 'type', "TEXT NOT NULL DEFAULT 'group'");
 
   ensureTable(
     db,
@@ -221,10 +306,11 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         slug TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'group' CHECK(type IN ('group', 'dm')),
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
-      INSERT OR IGNORE INTO rooms_migrated (id, slug, name, created_at)
-        SELECT id, ${slugExpr}, ${nameExpr}, ${createdExpr} FROM rooms;
+      INSERT OR IGNORE INTO rooms_migrated (id, slug, name, type, created_at)
+        SELECT id, ${slugExpr}, ${nameExpr}, 'group', ${createdExpr} FROM rooms;
       DROP TABLE rooms;
       ALTER TABLE rooms_migrated RENAME TO rooms;
     `);
@@ -241,27 +327,10 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   addColumnIfMissing(db, log, 'rooms', 'created_at', "TEXT DEFAULT ''");
   backfillEmpty(db, log, 'rooms', 'created_at');
 
-  const memberColumns = columnNames(db, 'room_members');
-  const rebuildMembers = !memberColumns.has('room') || !memberColumns.has('username');
-  if (rebuildMembers) {
-    db.exec('DROP TABLE IF EXISTS room_members');
-    db.exec(`
-      CREATE TABLE room_members (
-        room TEXT NOT NULL,
-        username TEXT NOT NULL,
-        PRIMARY KEY (room, username)
-      );
-    `);
-  }
-  note(
-    log,
-    rebuildMembers,
-    'rebuild_table',
-    { table: 'room_members' },
-    rebuildMembers ? 'rebuilt room_members with room+username' : 'room_members already has room+username'
+  const seeded = db.prepare("INSERT OR IGNORE INTO rooms (slug, name, type) VALUES (?, ?, 'group')").run(
+    'general',
+    'general'
   );
-
-  const seeded = db.prepare('INSERT OR IGNORE INTO rooms (slug, name) VALUES (?, ?)').run('general', 'general');
   note(
     log,
     seeded.changes > 0,
@@ -269,4 +338,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
     { slug: 'general', changes: seeded.changes },
     seeded.changes > 0 ? 'seeded room general' : 'room general already present'
   );
+
+  migrateRoomMembers(db, log);
+  backfillGeneralMembership(db, log);
 }

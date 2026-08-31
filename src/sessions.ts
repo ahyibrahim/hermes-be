@@ -53,6 +53,16 @@ export function createSession(username: string, now = Date.now()): SessionRecord
   return record;
 }
 
+export function deleteSession(token: string | undefined): boolean {
+  const trimmed = token?.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const result = getDb().prepare('DELETE FROM sessions WHERE token = ?').run(trimmed);
+  return Number(result.changes) > 0;
+}
+
 /**
  * Resolves a bearer token to a username, or null when the token is unknown or
  * expired. An expired row is deleted on the way out.
