@@ -293,6 +293,13 @@ starts in 5 minutes, so a service that is down and staying down means
 - **Git cannot find the tag.** The tag is not on `origin`, or you pointed
   `HERMES_REPO_URL` at the wrong remote. `deploy.sh` does not deploy the local
   working tree.
+- **`npm ci` / `EUSAGE` / missing `package-lock.json`.** `npm` ran in the
+  operator's cwd instead of `/srv/hermes/<instance>/hermes-be`. The `hermes`
+  user cannot read `/home/ai` (mode 750), so it looks like there is no lockfile
+  even when the production checkout has one. Current `deploy.sh` passes
+  `--prefix` so npm uses the checkout. Re-run the same command; you do not need
+  a new tag. The copy of `deploy.sh` you invoke is the one in this working
+  tree, not the copy inside `/srv`.
 - **`/health` reports the old version or commit.** The restart did not pick up
   the new build, or the build did not land. Check
   `journalctl -u hermes-be@p1 -n 50` and that

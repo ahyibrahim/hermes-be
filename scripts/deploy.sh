@@ -92,6 +92,15 @@ as_service_user() {
   fi
 }
 
+# npm must run in CHECKOUT. This script is invoked from the operator's working
+# tree (or, later, a runner workspace). The hermes user cannot read /home/ai
+# (mode 750), so a bare `npm ci` there fails with "no package-lock.json" even
+# though the production checkout has one. git already uses -C; npm gets --prefix.
+npm_in_checkout() {
+  as_service_user env HOME="$CHECKOUT" npm_config_cache="${CHECKOUT}/.npm-cache" \
+    npm --prefix "$CHECKOUT" "$@"
+}
+
 # Reads one variable out of the systemd EnvironmentFile without sourcing it.
 env_file_value() {
   local key="$1"
@@ -161,14 +170,12 @@ install_dependencies() {
   # npm ci, not `npm ci --omit=dev`: tsc needs the @types packages, which live in
   # devDependencies. HOME and the cache are redirected because the service user
   # deliberately has no home directory.
-  as_service_user env HOME="$CHECKOUT" npm_config_cache="${CHECKOUT}/.npm-cache" \
-    npm ci --no-audit --no-fund
+  npm_in_checkout ci --no-audit --no-fund
 }
 
 build_backend() {
   step "Building"
-  as_service_user env HOME="$CHECKOUT" npm_config_cache="${CHECKOUT}/.npm-cache" \
-    npm run build
+  npm_in_checkout run build
   [[ -f "${CHECKOUT}/dist/server.js" ]] || fail "build produced no dist/server.js"
 }
 
