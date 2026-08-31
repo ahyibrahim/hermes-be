@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
-import { migrateSchema } from './schema';
+import { migrateSchema, SchemaLogger } from './schema';
 
 type SqliteDb = Database.Database;
 
@@ -17,7 +17,7 @@ export function resolveDatabasePath(): string {
  * The one connection every module shares. Opened lazily so tests can point
  * HERMES_DB_PATH at a temp directory before the first query.
  */
-export function getDb(): SqliteDb {
+export function getDb(log?: SchemaLogger): SqliteDb {
   if (handle) {
     return handle;
   }
@@ -29,7 +29,7 @@ export function getDb(): SqliteDb {
   }
 
   const db = new Database(dbPath);
-  migrateSchema(db);
+  migrateSchema(db, log);
   handle = db;
   return handle;
 }

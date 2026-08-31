@@ -18,8 +18,10 @@ import {
   listRooms,
 } from './db';
 import { loginUser, registerUser } from './auth';
+import { getDb } from './database';
 import { findSessionUser } from './sessions';
 import { buildInfo } from './build-info';
+import { buildLoggerConfig, type LogDestination } from './logger';
 
 type RoomSocket = {
   socket: { readyState: number; send: (data: string) => void; ping?: () => void; terminate?: () => void };
@@ -106,13 +108,43 @@ function unwrapSocket(connection: unknown): any {
   return connection;
 }
 
-export async function createApp(): Promise<{
+export type CreateAppOptions = {
+  loggerDestination?: LogDestination;
+  logLevel?: string;
+};
+
+export async function createApp(options: CreateAppOptions = {}): Promise<{
   app: FastifyInstance;
   roomClients: Map<string, Set<RoomSocket>>;
 }> {
-  const fastify = Fastify({ logger: false });
+  const fastify = Fastify({
+    logger: buildLoggerConfig({
+      destination: options.loggerDestination,
+      level: options.logLevel,
+    }),
+    genReqId: () => crypto.randomUUID(),
+    requestIdHeader: 'x-request-id',
+    requestIdLogLabel: 'reqId',
+  });
   const roomClients = new Map<string, Set<RoomSocket>>();
   const lastPong = new WeakMap<object, number>();
+
+  getDb({
+    info(obj, msg) {
+      fastify.log.info(obj, msg ?? '');
+    },
+  });
+
+  fastify.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
+    const statusCode = error.statusCode ?? 500;
+    const payload = { err: error, event: 'request_error', statusCode };
+    if (statusCode >= 500) {
+      request.log.error(payload, error.message);
+    } else {
+      request.log.info(payload, error.message);
+    }
+    return reply.status(statusCode).send(error);
+  });
 
   function connectedUsers(room: string): string[] {
     const clients = roomClients.get(room);
@@ -220,10 +252,15 @@ export async function createApp(): Promise<{
 
     const session = loginUser(body.username, body.password);
     if (!session) {
+      request.log.info(
+        { event: 'login_failure', username: body.username.trim().toLowerCase() },
+        'login failed'
+      );
       reply.code(401);
       return { error: 'invalid credentials' };
     }
 
+    request.log.info({ event: 'login_success', username: session.username }, 'login succeeded');
     return session;
   });
 
@@ -346,6 +383,17 @@ export async function createApp(): Promise<{
     );
     const message = createMessage(slug, username, file.original_name, file.id);
     broadcastToRoom(slug, { type: 'message', message });
+    request.log.info(
+      {
+        event: 'file_upload',
+        id: file.id,
+        uploader: username,
+        size: file.size,
+        mime: file.mime,
+        room: slug,
+      },
+      'file uploaded'
+    );
 
     return {
       file: {
@@ -403,6 +451,10 @@ export async function createApp(): Promise<{
         if (typeof token === 'string' && token.trim()) {
           const username = findSessionUser(token);
           if (!username) {
+            request.log.info(
+              { event: 'ws_unauthorized', reason: 'invalid_token' },
+              'websocket handshake rejected'
+            );
             return reply.code(401).send({ error: 'authentication required' });
           }
           (request as FastifyRequest & { username: string }).username = username;
@@ -411,6 +463,10 @@ export async function createApp(): Promise<{
 
         // Handshake token is the contract. Until the CLI sends ?token=, it may still
         // pass { token } on join_room after an unauthenticated upgrade is rejected.
+        request.log.info(
+          { event: 'ws_unauthorized', reason: 'missing_token' },
+          'websocket handshake rejected'
+        );
         return reply.code(401).send({ error: 'authentication required' });
       },
     },
@@ -421,6 +477,9 @@ export async function createApp(): Promise<{
       let client: RoomSocket | null = null;
 
       lastPong.set(socket, Date.now());
+      if (user) {
+        request.log.info({ event: 'ws_connect', user }, 'websocket connected');
+      }
 
       const leaveCurrentRoom = () => {
         if (!client || !room) {
@@ -468,6 +527,7 @@ export async function createApp(): Promise<{
               }
               user = username;
               sendJson(socket, { type: 'connected', user });
+              request.log.info({ event: 'ws_connect', user }, 'websocket connected');
             }
 
             const slug = normalizeRoomSlug(payload.room);
@@ -494,6 +554,7 @@ export async function createApp(): Promise<{
             sendJson(socket, { type: 'joined_room', room });
             sendJson(socket, { type: 'room_users', room, users: connectedUsers(room) });
             broadcastToRoom(room, { type: 'user_joined', room, user }, socket);
+            request.log.info({ event: 'room_join', user, room }, 'joined room');
             return;
           }
 
@@ -509,17 +570,29 @@ export async function createApp(): Promise<{
 
           sendJson(socket, errorFrame('unknown message type'));
         } catch (error) {
+          request.log.warn(
+            { err: error, event: 'ws_error', user, room: room ?? undefined },
+            'websocket message handler failed'
+          );
           const content =
             error instanceof SyntaxError ? 'Invalid message payload' : (error as Error).message;
           sendJson(socket, errorFrame(content));
         }
       });
 
-      socket.on('error', () => {
+      socket.on('error', (error: Error) => {
+        request.log.error(
+          { err: error, event: 'ws_error', user, room: room ?? undefined },
+          'websocket error'
+        );
         leaveCurrentRoom();
       });
 
       socket.on('close', () => {
+        request.log.info(
+          { event: 'ws_disconnect', user, room: room ?? undefined },
+          'websocket disconnected'
+        );
         leaveCurrentRoom();
       });
     }

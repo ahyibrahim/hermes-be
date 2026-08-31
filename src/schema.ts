@@ -2,9 +2,26 @@ import Database from 'better-sqlite3';
 
 type SqliteDb = Database.Database;
 
+export interface SchemaLogger {
+  info(obj: Record<string, unknown>, msg?: string): void;
+}
+
+const silentLogger: SchemaLogger = {
+  info() {
+    // Tests and direct callers that do not care about migrate output.
+  },
+};
+
 function tableExists(db: SqliteDb, name: string): boolean {
   const row = db
     .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name) as { ok: number } | undefined;
+  return Boolean(row);
+}
+
+function indexExists(db: SqliteDb, name: string): boolean {
+  const row = db
+    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(name) as { ok: number } | undefined;
   return Boolean(row);
 }
@@ -18,52 +35,155 @@ function columnNames(db: SqliteDb, table: string): Set<string> {
   return new Set(rows.map((row) => row.name));
 }
 
-function addColumnIfMissing(db: SqliteDb, table: string, column: string, definition: string): void {
-  if (!columnNames(db, table).has(column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
+function note(
+  log: SchemaLogger,
+  applied: boolean,
+  step: string,
+  extra: Record<string, unknown>,
+  summary: string
+): void {
+  log.info({ event: 'migrate', step, applied, ...extra }, summary);
 }
 
-export function migrateSchema(db: SqliteDb): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
+function ensureTable(db: SqliteDb, log: SchemaLogger, name: string, ddl: string): void {
+  const existed = tableExists(db, name);
+  db.exec(ddl);
+  note(
+    log,
+    !existed,
+    'create_table',
+    { table: name },
+    existed ? `table ${name} already exists` : `created table ${name}`
+  );
+}
+
+function ensureIndex(db: SqliteDb, log: SchemaLogger, name: string, ddl: string): void {
+  const existed = indexExists(db, name);
+  db.exec(ddl);
+  note(
+    log,
+    !existed,
+    'create_index',
+    { index: name },
+    existed ? `index ${name} already exists` : `created index ${name}`
+  );
+}
+
+function addColumnIfMissing(
+  db: SqliteDb,
+  log: SchemaLogger,
+  table: string,
+  column: string,
+  definition: string
+): void {
+  const missing = !columnNames(db, table).has(column);
+  if (missing) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+  note(
+    log,
+    missing,
+    'add_column',
+    { table, column },
+    missing ? `added ${table}.${column}` : `column ${table}.${column} already exists`
+  );
+}
+
+function backfillEmpty(
+  db: SqliteDb,
+  log: SchemaLogger,
+  table: string,
+  column: string
+): void {
+  const result = db
+    .prepare(
+      `UPDATE ${table} SET ${column} = datetime('now') WHERE ${column} IS NULL OR ${column} = ''`
+    )
+    .run();
+  note(
+    log,
+    result.changes > 0,
+    'backfill',
+    { table, column, changes: result.changes },
+    result.changes > 0
+      ? `backfilled ${result.changes} ${table}.${column} row(s)`
+      : `no ${table}.${column} rows to backfill`
+  );
+}
+
+export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): void {
+  ensureTable(
+    db,
+    log,
+    'users',
+    `CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+    )`
+  );
 
-    CREATE TABLE IF NOT EXISTS sessions (
+  ensureTable(
+    db,
+    log,
+    'sessions',
+    `CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       username TEXT NOT NULL,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
-    );
+    )`
+  );
 
-    CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+  ensureIndex(
+    db,
+    log,
+    'idx_sessions_expires_at',
+    'CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)'
+  );
 
-    CREATE TABLE IF NOT EXISTS messages (
+  ensureTable(
+    db,
+    log,
+    'messages',
+    `CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room TEXT NOT NULL DEFAULT 'general',
       sender TEXT NOT NULL DEFAULT 'anonymous',
       content TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+    )`
+  );
 
-    CREATE TABLE IF NOT EXISTS rooms (
+  ensureTable(
+    db,
+    log,
+    'rooms',
+    `CREATE TABLE IF NOT EXISTS rooms (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
+    )`
+  );
 
-    CREATE TABLE IF NOT EXISTS room_members (
+  ensureTable(
+    db,
+    log,
+    'room_members',
+    `CREATE TABLE IF NOT EXISTS room_members (
       room TEXT NOT NULL,
       username TEXT NOT NULL,
       PRIMARY KEY (room, username)
-    );
+    )`
+  );
 
-    CREATE TABLE IF NOT EXISTS files (
+  ensureTable(
+    db,
+    log,
+    'files',
+    `CREATE TABLE IF NOT EXISTS files (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       room TEXT NOT NULL,
       uploader TEXT NOT NULL,
@@ -72,22 +192,23 @@ export function migrateSchema(db: SqliteDb): void {
       size INTEGER NOT NULL,
       path TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    )`
+  );
 
   // Databases in the wild had `users` created by the old auth.ts code path rather
   // than here, so treat every column as possibly absent.
-  addColumnIfMissing(db, 'users', 'created_at', "TEXT DEFAULT ''");
-  db.exec(`UPDATE users SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''`);
+  addColumnIfMissing(db, log, 'users', 'created_at', "TEXT DEFAULT ''");
+  backfillEmpty(db, log, 'users', 'created_at');
 
-  addColumnIfMissing(db, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
-  addColumnIfMissing(db, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");
-  addColumnIfMissing(db, 'messages', 'content', "TEXT NOT NULL DEFAULT ''");
-  addColumnIfMissing(db, 'messages', 'created_at', "TEXT DEFAULT ''");
-  addColumnIfMissing(db, 'messages', 'file_id', 'INTEGER');
-  db.exec(`UPDATE messages SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''`);
+  addColumnIfMissing(db, log, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
+  addColumnIfMissing(db, log, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");
+  addColumnIfMissing(db, log, 'messages', 'content', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, log, 'messages', 'created_at', "TEXT DEFAULT ''");
+  addColumnIfMissing(db, log, 'messages', 'file_id', 'INTEGER');
+  backfillEmpty(db, log, 'messages', 'created_at');
 
-  if (tableExists(db, 'rooms') && !columnNames(db, 'rooms').has('slug')) {
+  const rebuildRooms = tableExists(db, 'rooms') && !columnNames(db, 'rooms').has('slug');
+  if (rebuildRooms) {
     const cols = columnNames(db, 'rooms');
     const nameExpr = cols.has('name') ? "COALESCE(name, 'general')" : "'general'";
     const createdExpr = cols.has('created_at') ? 'COALESCE(created_at, CURRENT_TIMESTAMP)' : 'CURRENT_TIMESTAMP';
@@ -108,13 +229,21 @@ export function migrateSchema(db: SqliteDb): void {
       ALTER TABLE rooms_migrated RENAME TO rooms;
     `);
   }
+  note(
+    log,
+    rebuildRooms,
+    'rebuild_table',
+    { table: 'rooms' },
+    rebuildRooms ? 'rebuilt rooms with slug' : 'rooms already has slug'
+  );
 
-  addColumnIfMissing(db, 'rooms', 'name', "TEXT NOT NULL DEFAULT 'general'");
-  addColumnIfMissing(db, 'rooms', 'created_at', "TEXT DEFAULT ''");
-  db.exec(`UPDATE rooms SET created_at = datetime('now') WHERE created_at IS NULL OR created_at = ''`);
+  addColumnIfMissing(db, log, 'rooms', 'name', "TEXT NOT NULL DEFAULT 'general'");
+  addColumnIfMissing(db, log, 'rooms', 'created_at', "TEXT DEFAULT ''");
+  backfillEmpty(db, log, 'rooms', 'created_at');
 
   const memberColumns = columnNames(db, 'room_members');
-  if (!memberColumns.has('room') || !memberColumns.has('username')) {
+  const rebuildMembers = !memberColumns.has('room') || !memberColumns.has('username');
+  if (rebuildMembers) {
     db.exec('DROP TABLE IF EXISTS room_members');
     db.exec(`
       CREATE TABLE room_members (
@@ -124,6 +253,20 @@ export function migrateSchema(db: SqliteDb): void {
       );
     `);
   }
+  note(
+    log,
+    rebuildMembers,
+    'rebuild_table',
+    { table: 'room_members' },
+    rebuildMembers ? 'rebuilt room_members with room+username' : 'room_members already has room+username'
+  );
 
-  db.prepare('INSERT OR IGNORE INTO rooms (slug, name) VALUES (?, ?)').run('general', 'general');
+  const seeded = db.prepare('INSERT OR IGNORE INTO rooms (slug, name) VALUES (?, ?)').run('general', 'general');
+  note(
+    log,
+    seeded.changes > 0,
+    'seed_room',
+    { slug: 'general', changes: seeded.changes },
+    seeded.changes > 0 ? 'seeded room general' : 'room general already present'
+  );
 }
