@@ -7,16 +7,17 @@ with no ORM; and `hermes-fe`, today a TypeScript readline CLI, which grows a web
 UI over the course of this plan.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.8.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels and
-should trace back to a bullet here. When scope moves between releases, it moves
-here first.
+v0.8.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+`backlog` when they have no target release, and should trace back to a bullet
+here. When scope moves between releases, it moves here first.
 
 Architecture decisions live in [adr/](adr/):
 
 - [0001 Frontend stack](adr/0001-frontend-stack.md) - SvelteKit with
   `adapter-static`, chosen over React and Vite.
-- [0002 Deployment topology](adr/0002-deployment-topology.md) - one self-hosted
-  runner on `ying-1`, release-published deploys, public-repo hardening.
+- [0002 Deployment topology](adr/0002-deployment-topology.md) - template systemd
+  unit and manual `deploy.sh` (shipped). CI wiring via a self-hosted runner is
+  backlog, blocked on making hermes-be private.
 
 ## Decisions locked in
 
@@ -28,30 +29,22 @@ a single origin, so there is no CORS and no second process to supervise. See ADR
 **Repo layout.** An npm workspaces monorepo inside `hermes-fe`, with
 `packages/core`, `apps/cli` and `apps/web`. The CLI keeps working throughout.
 
-**Deploy trigger.** Published releases, plus a `workflow_dispatch` button taking
-a tag as input for redeploys and rollbacks. Pushing a tag does not deploy; only
-publishing a GitHub Release fires `release: published`. Pushing to `main` stays
-safe, and deploying is a deliberate act from any device. `workflow_dispatch` is
-restricted to accounts with write access, so it does not widen the attack
-surface.
+**Deploy path (now).** Manual `scripts/deploy.sh` on ying-1. Pushing a git tag
+does not deploy. See [docs/DEPLOY.md](DEPLOY.md).
 
-**Deploy topology.** One self-hosted GitHub Actions runner on `ying-1`,
-registered to hermes-be. It polls GitHub over outbound HTTPS, so a release
-published from any device triggers a deploy with no inbound access to the host,
-no tailnet path from GitHub, and no credentials on the pushing device. hermes-fe
-builds its static bundle on a GitHub-hosted runner and publishes it as a release
-asset, so only one self-hosted runner exists. See ADR 0002.
+**Deploy automation (backlog).** A self-hosted runner on ying-1, fired by
+publishing a GitHub Release, calling that same `deploy.sh`. Deferred: a runner
+on a public repo is a path for a fork pull request to execute code next to the
+live database. That work is blocked on making hermes-be private
+([be#35](https://github.com/ahyibrahim/hermes-be/issues/35)). See ADR 0002.
 
-**Split rollout.** The host becomes a real systemd service with a manual
-`deploy.sh` in v0.3.0, and that script gets wired into CI in v0.5.0. The deploy
-logic is written once; CI only gains the trigger, the artifact fetch and the
-rollback.
+**Split rollout.** The host became a systemd service with a manual `deploy.sh`
+in v0.3.0. Wiring that script into CI is unscheduled, not the next release.
 
-**Repos stay public.** Private would not help integration or publishing, and
-would actively cost a PAT for the cross-repo artifact fetch plus the Actions
-minutes quota. The fork-PR risk it would have closed is instead closed by
-requiring approval for all outside collaborators' workflows in Settings, Actions,
-General.
+**Repos stay public until be#35.** ADR 0002 originally kept them public and
+closed the fork-PR vector with workflow discipline. That is reversed as a
+precondition for any self-hosted runner: hermes-be becomes private first.
+hermes-fe can stay public (GitHub-hosted builds only).
 
 **Environments.** A template systemd unit `hermes-be@.service` with per-instance
 environment files from the start, but only `p1` running initially. Data lives
@@ -62,7 +55,7 @@ membership migration, which is the one change risky enough to justify a
 rehearsal.
 
 **Issues.** Filed in both repos, split by where the work lives, grouped with
-`release:vX.Y.Z` labels.
+`release:vX.Y.Z` or `backlog`.
 
 ## Three prerequisites the milestone list did not mention
 
@@ -106,9 +99,8 @@ sessions table ships in v0.3.0, ahead of the rest of the auth hardening.
 graph LR
   v02[v0.2.0 Cleanup and CLI fix] --> v03[v0.3.0 Shared core and host foundations]
   v03 --> v04[v0.4.0 Web UI MVP]
-  v04 --> v05[v0.5.0 Deploy automation]
-  v05 --> v06[v0.6.0 Rooms and users]
-  v05 --> v07[v0.7.0 Accounts and security]
+  v04 --> v06[v0.6.0 Rooms and users]
+  v04 --> v07[v0.7.0 Accounts and security]
   v06 --> v08[v0.8.0 Voice chat]
   v07 --> v08
 ```
@@ -118,14 +110,13 @@ it needs a real rewrite rather than a one-liner. The shared-core extraction is
 its own release because it is roughly 60 percent of the migration effort and is
 framework-agnostic, so it can be reviewed and shipped with zero UI risk and the
 CLI still working; it runs in parallel with the backend host work, which is in a
-different repo. Full deploy automation waits until v0.5.0 so it is built once
-already knowing it must ship both a Node service and a static bundle, but the
-underlying service and script land in v0.3.0 so the gap is one SSH command
-rather than a manual build. Rooms/DMs and accounts both land after automation
-because both are far more valuable with a UI to drive them and a one-tag deploy
-to try them on; they are independent of each other, so their order is
-interchangeable. Voice chat is last because it needs both a UI and the hardened
-auth.
+different repo. Deploy automation was planned as v0.5.0 so it would be built
+once already knowing it must ship both a Node service and a static bundle; the
+underlying service and script landed in v0.3.0, and the CI wiring is now
+backlog (blocked on a private hermes-be) rather than a gate for rooms or
+accounts. Rooms/DMs and accounts are independent of each other and of
+automation — they still want a UI, which v0.4.0 shipped. Voice chat is last
+because it needs both a UI and the hardened auth.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -144,8 +135,7 @@ auth.
   release branch is clean.
 - Add `.github/` to both repos: issue and PR templates, plus a CI workflow
   running `npm test` on push and pull request, pinned to `ubuntu-latest`. These
-  must never move to the self-hosted runner added in v0.5.0, since both repos
-  are public.
+  must never move to a self-hosted runner while the repo is public.
 - Write a real `hermes-fe/README.md` (currently one line) covering install,
   `HERMES_BASE_URL`, and the slash commands from `printHelp()`.
 - Create `docs/ROADMAP.md` in hermes-be as the single tracker, plus
@@ -233,7 +223,12 @@ Two independent tracks in two repos; they can proceed in either order.
 - Tag `v0.4.0`. This is the first release where hermes-fe ships two artifacts
   from one repo.
 
-## v0.5.0 - Deploy automation
+## Deploy automation (backlog, was v0.5.0)
+
+Unscheduled. Blocked on making hermes-be private
+([be#35](https://github.com/ahyibrahim/hermes-be/issues/35)). Do not install a
+runner or add `runs-on: self-hosted` until that issue is closed. Manual
+`deploy.sh` remains the production path. Issues: be#15–#20, fe#16.
 
 - Register a self-hosted runner on `ying-1` via `svc.sh install` so it starts at
   boot and a release published from a laptop is picked up even with nobody
@@ -244,18 +239,12 @@ Two independent tracks in two repos; they can proceed in either order.
   runner and upload `build/` as a release asset.
 - hermes-be workflow on published release, on the self-hosted runner: check out
   the tag into `/srv/hermes`, download the matching hermes-fe web asset, then
-  call the existing `deploy.sh`. Both repos are public, so the release asset is
-  fetchable with the default `GITHUB_TOKEN` and no cross-repo PAT secret is
-  needed.
-- Harden the runner, because a self-hosted runner on a **public** repo is the one
-  genuinely risky part of this design: without care, anyone can open a pull
-  request whose workflow executes arbitrary code on `ying-1`. Mitigations, in
-  order of importance: never attach a `pull_request` trigger to the self-hosted
-  runner (the `release: published` trigger cannot be fired from a fork); pin
-  every test and build workflow to `ubuntu-latest`; set Actions to require
-  approval for all outside collaborators' fork PRs; keep the sudoers rule to the
-  two `systemctl` verbs so a compromise cannot trivially escalate. Making the
-  repos private removes the vector entirely if that is acceptable.
+  call the existing `deploy.sh`. With hermes-be private and hermes-fe public,
+  the default `GITHUB_TOKEN` can still fetch that asset; both-private would
+  need a PAT.
+- Keep runner hardening even after the repo is private: never attach a
+  `pull_request` trigger to the self-hosted runner; pin test/build workflows
+  to `ubuntu-latest`; keep sudoers to the two `systemctl` verbs.
 - Add a `workflow_dispatch` trigger to the hermes-be workflow with a required
   `tag` input, so any released version can be redeployed or rolled back from the
   Actions tab without deleting and recreating a Release. Editing an

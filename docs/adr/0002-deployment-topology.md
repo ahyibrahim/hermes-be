@@ -1,17 +1,25 @@
 # 0002 - Deployment topology
 
-- Status: Accepted
-- Date: 2026-08-30
+- Status: Accepted for the host shape (template unit, `deploy.sh`, `p1`).
+  CI wiring deferred.
+- Date: 2026-08-30 (CI wiring deferred 2026-09-01)
 - Deciders: project author
 - Affects: `hermes-be` (runner, service, instances), `hermes-fe` (release build)
-- Implemented across: v0.3.0 (service and manual script), v0.5.0 (CI wiring)
+- Implemented across: v0.3.0 (service and manual script). Self-hosted runner
+  and release workflows are backlog, blocked on making hermes-be private
+  ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35)).
 
 ## Decision
 
-Deploy Hermes with **one self-hosted GitHub Actions runner on `ying-1`**, fired
-by **publishing a GitHub Release**, into **per-instance systemd units from a
-template**, using a **`deploy.sh` written once in v0.3.0 and wired into CI in
-v0.5.0**.
+**Shipped:** per-instance systemd units from a template, and `deploy.sh` written
+once in v0.3.0, invoked by hand.
+
+**Deferred:** one self-hosted GitHub Actions runner on `ying-1`, fired by
+publishing a GitHub Release, calling that same `deploy.sh`. A runner on a
+public repo is a path for a fork pull request to execute code on the machine
+that holds the live database. That work does not resume until hermes-be is
+private. The original “repos stay public + workflow discipline” alternative is
+what this deferral reverses.
 
 ## Context
 
@@ -129,14 +137,14 @@ The deploy logic is written **once**, in two stages:
   lands, taking the instance as its first argument, runnable by hand over SSH. It
   fetches a tag, runs `npm ci` and `npm run build`, migrates, restarts the unit,
   and polls `/health` for the expected version.
-- **v0.5.0**: CI calls that same script. CI gains only the trigger, the
-  cross-repo web-asset fetch (with a short retry backoff, since the two repos
+- **CI wiring (backlog):** CI calls that same script. CI gains only the trigger,
+  the cross-repo web-asset fetch (with a short retry backoff, since the two repos
   release independently and the `hermes-fe` bundle may still be uploading), and
-  rollback.
+  rollback. Deferred until hermes-be is private.
 
-The point is that automation is not a rewrite of the deploy path, and until
-v0.5.0 the gap between manual and automated is one SSH command rather than a
-manual build.
+The point is that automation is not a rewrite of the deploy path. Until CI
+wiring lands, the gap between a tagged tree and production is one SSH command
+(`deploy.sh`) rather than a manual build.
 
 ## No automated backups in `deploy.sh`
 
@@ -185,18 +193,15 @@ key as GitHub secrets, so a workflow compromise yields tailnet access and host
 login, and it puts credentials in the cloud in exchange for removing a local
 agent. The polling runner needs no inbound path and no stored keys.
 
-**Plain manual `deploy.sh` over SSH, no CI at all.** Rejected as the end state,
-though it is deliberately the v0.3.0 milestone. It requires being on the tailnet
-with host credentials to ship anything, which is exactly the friction that keeps
-fixes unreleased. Keeping it as the intermediate step is what makes the CI wiring
-in v0.5.0 cheap.
+**Plain manual `deploy.sh` over SSH, no CI at all.** This is the production path
+until hermes-be is private and the backlog issues are scheduled. It requires
+being on the tailnet with host credentials to ship anything.
 
-**Making both repos private.** This would remove the fork-PR vector entirely and
-was seriously considered. Rejected because it does not help integration or
-publishing, it would cost a cross-repo PAT for the web-asset fetch, and it brings
-the Actions minutes quota into play. The vector it closes is closed instead by
-requiring approval for outside collaborators' workflows plus rules 1 and 2 above.
-If the hardening rules ever start feeling fragile, revisit this.
+**Making hermes-be private.** Originally rejected (a PAT, Actions minutes, no
+help for publishing). Reopened as the **blocker** for any self-hosted runner
+([be#35](https://github.com/ahyibrahim/hermes-be/issues/35)). hermes-fe can stay
+public so the web asset stays fetchable without a PAT. If both become private,
+that PAT cost returns.
 
 **Deploy on every push to `main`.** Rejected: it makes merging and deploying the
 same act, removes the ability to deploy an older version deliberately, and offers
