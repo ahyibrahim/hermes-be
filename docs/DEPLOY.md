@@ -14,10 +14,10 @@ hermes-fe is the CLI, not the web UI.
 
 As of v0.4.0 deploying is still a manual, deliberate act: merge the release PRs,
 push a tag on **both** repos, build the hermes-fe SPA, run `setup-host.sh` once
-if the host is not provisioned, then run `deploy.sh`. See
-[what changes in v0.5.0](#what-changes-in-v050) and
-[adr/0002-deployment-topology.md](adr/0002-deployment-topology.md) for why it is
-built in that order. Pushing a tag still does not deploy.
+if the host is not provisioned, then run `deploy.sh`. Automated deploy is
+[backlog](#automated-deploy-backlog), blocked on a private hermes-be. See
+[adr/0002-deployment-topology.md](adr/0002-deployment-topology.md). Pushing a
+tag still does not deploy.
 
 ## Local launch (before a tag)
 
@@ -210,10 +210,10 @@ Redeploy the previous tag:
 sudo ./scripts/deploy.sh p1 v0.2.0
 ```
 
-There is no automated rollback in v0.4.0. It arrives in v0.5.0, wired to a failed
-health check. A rollback of a release that shipped a web bundle needs
+There is no automated rollback. Redeploying an older tag by hand is the
+rollback. A rollback of a release that shipped a web bundle needs
 `HERMES_WEB_BUNDLE` pointing at that tag's `apps/web/build` as well, so the SPA
-and the API stay paired.
+and the API stay paired. Health-gated rollback inside `deploy.sh` is backlog.
 
 ## Environment variables
 
@@ -239,9 +239,9 @@ The systemd `EnvironmentFile` format is not shell: no `export`, no command
 substitution, and quotes are only needed for values containing spaces.
 
 `HERMES_WEB_BUNDLE` is **not** in the env file. It is an argument to
-`scripts/deploy.sh` for this release: the path to a built `apps/web/build`
-directory, or a `.tar.gz` of it. v0.5.0 replaces that with a download from the
-matching hermes-fe GitHub Release.
+`scripts/deploy.sh`: the path to a built `apps/web/build` directory, or a
+`.tar.gz` of it. Automated download from a hermes-fe GitHub Release is backlog
+(blocked on a private hermes-be); until then, pass the path by hand.
 
 ## Service status and logs
 
@@ -311,21 +311,26 @@ starts in 5 minutes, so a service that is down and staying down means
   /etc/systemd/system/hermes-be@.service`, and check `/etc/hermes/p1.env` exists
   — a missing `EnvironmentFile` fails the unit.
 
-## What changes in v0.5.0
+## Automated deploy (backlog)
 
-The manual step above becomes a GitHub Actions job on a self-hosted runner on
-`ying-1`, triggered by **publishing a GitHub Release** (plus a
-`workflow_dispatch` button taking a tag, for redeploys and rollbacks). It calls
-this same `scripts/deploy.sh`; CI gains only the trigger, the cross-repo
-hermes-fe web-bundle fetch, and rollback. That is why the script exists in this
-release rather than being written later.
+Not the next release. A self-hosted runner on a public repo would let a fork
+pull request try to run code on ying-1. That work is blocked on making
+hermes-be private
+([be#35](https://github.com/ahyibrahim/hermes-be/issues/35)). Until then,
+`deploy.sh` by hand is the production path.
 
-Two things worth knowing now, because both are easy to get wrong:
+When it does land, the manual step above becomes a GitHub Actions job on a
+self-hosted runner on `ying-1`, triggered by **publishing a GitHub Release**
+(plus a `workflow_dispatch` button taking a tag, for redeploys and rollbacks).
+It calls this same `scripts/deploy.sh`; CI gains only the trigger, the
+cross-repo hermes-fe web-bundle fetch, and rollback.
+
+Two things worth knowing now, because both are easy to get wrong even after
+that ships:
 
 - **Pushing a tag will not deploy.** Only publishing a Release fires
   `release: published`. Pushing to `main` is likewise always safe.
 - **Editing an already-published Release does not re-fire the event.** That is
   what the dispatch button is for.
 
-Full detail, including the hardening rules for a self-hosted runner on a public
-repository, is in [adr/0002-deployment-topology.md](adr/0002-deployment-topology.md).
+Full detail is in [adr/0002-deployment-topology.md](adr/0002-deployment-topology.md).

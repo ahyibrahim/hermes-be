@@ -185,7 +185,7 @@ sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
 journalctl -u hermes-be@p1 -f
 ```
 
-`setup-host.sh` must run before the first `deploy.sh` or the deploy fails with a missing env file. `deploy.sh` checks out the **GitHub tag** (not this working tree), builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
+`setup-host.sh` must run before the first `deploy.sh` or the deploy fails with a missing env file. `deploy.sh` checks out the **GitHub tag** (not this working tree), builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. Wiring this into GitHub Actions is backlog, blocked on a private hermes-be; pushing a tag alone still does not deploy.
 
 ## Roadmap
 
