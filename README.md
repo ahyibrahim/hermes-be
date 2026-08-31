@@ -19,6 +19,7 @@ Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `f
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Anything that is not a positive number falls back to 30. |
 | `LOG_LEVEL` | `info` | Pino level (`fatal` … `silent`). JSON to stdout; pretty-print only on a TTY. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. Set by `scripts/deploy.sh`; falls back to asking git, then to `unknown`. |
+| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle. When set to an existing directory, this process serves the web UI (and SPA client routes) from the same origin as the API and `/ws`. Unset, or a path that does not exist, is a no-op. |
 
 Production instances read these from `/etc/hermes/<instance>.env`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -35,7 +36,7 @@ npm run build
 
 ## Current status
 
-Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history.
+Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history. When `HERMES_WEB_DIR` is set to an existing directory, this same process also serves the web UI so REST, `/ws`, and the SPA share one origin.
 
 ## Auth
 
@@ -67,7 +68,7 @@ Rooms are **slugs** (`general`), never numeric ids. `GET /messages?room=1` retur
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
@@ -164,11 +165,12 @@ The CLI should:
 
 ```sh
 sudo ./scripts/setup-host.sh p1     # once, needs root
-sudo ./scripts/deploy.sh p1 v0.3.0  # per release
+sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build \
+  ./scripts/deploy.sh p1 v0.4.0     # per release
 journalctl -u hermes-be@p1 -f
 ```
 
-`deploy.sh` checks out the tag, builds, restarts the unit and polls `/health` until it reports the version and commit it just deployed. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
+`deploy.sh` checks out the tag, builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
 
 ## Roadmap
 

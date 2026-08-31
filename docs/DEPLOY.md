@@ -7,10 +7,11 @@ Neither is the editable checkout at `/home/ai/Workspace/hermes-be`, and that
 separation is the point: a deploy must never touch the working tree, and
 `npm test` must never be able to reach real message history.
 
-As of v0.3.0 deploying is a manual, deliberate act: publish a tag, SSH to the
-host, run one script. See [what changes in v0.5.0](#what-changes-in-v050) and
+As of v0.4.0 deploying is still a manual, deliberate act: publish a tag, build
+the hermes-fe SPA, SSH to the host, run one script. See
+[what changes in v0.5.0](#what-changes-in-v050) and
 [adr/0002-deployment-topology.md](adr/0002-deployment-topology.md) for why it is
-built in that order.
+built in that order. Pushing a tag still does not deploy.
 
 ## The instance model
 
@@ -72,41 +73,65 @@ unset unless you know there is a database worth carrying over.
    the release branch and push the tag:
 
    ```sh
-   git tag v0.3.0
-   git push origin v0.3.0
+   git tag v0.4.0
+   git push origin v0.4.0
    ```
 
    Pushing a tag does not deploy anything, in this release or later ones.
 
-2. **SSH to the host.**
+2. **Build the web UI** in a hermes-fe checkout (SvelteKit `adapter-static`).
+   The artifact is `apps/web/build`:
+
+   ```sh
+   cd /path/to/hermes-fe
+   npm run build
+   ```
+
+   That directory (or a `.tar.gz` of it) is what `deploy.sh` unpacks into
+   `HERMES_WEB_DIR`. Skip this step only for a backend-only instance, where
+   `HERMES_WEB_DIR` is unset in `/etc/hermes/<instance>.env`.
+
+3. **SSH to the host.**
 
    ```sh
    ssh ying-1
    ```
 
-3. **Run the deploy.**
+4. **Run the deploy.** When `HERMES_WEB_DIR` is set (the default in
+   `deploy/hermes.env.example`), pass the bundle path:
 
    ```sh
    cd /home/ai/Workspace/hermes-be
-   sudo ./scripts/deploy.sh p1 v0.3.0
+   sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build ./scripts/deploy.sh p1 v0.4.0
    ```
 
    The script checks the tag out into `/srv/hermes/p1/hermes-be` as the `hermes`
-   user, runs `npm ci` and `npm run build`, writes the deployed commit into
-   `/etc/hermes/p1.env` as `HERMES_GIT_COMMIT`, restarts `hermes-be@p1`, and then
-   polls `/health` until it reports the version and commit that were just
-   deployed. It exits non-zero with the `journalctl` command to run if it does
-   not see them within 90 seconds (`HERMES_HEALTH_TIMEOUT`).
+   user, runs `npm ci` and `npm run build`, replaces the contents of
+   `HERMES_WEB_DIR` with the bundle (so stale hashed assets from the previous
+   release do not linger), writes the deployed commit into `/etc/hermes/p1.env`
+   as `HERMES_GIT_COMMIT`, restarts `hermes-be@p1`, and then polls `/health`
+   until it reports the version and commit that were just deployed. It exits
+   non-zero with the `journalctl` command to run if it does not see them within
+   90 seconds (`HERMES_HEALTH_TIMEOUT`).
 
-4. **Confirm.**
+   If `HERMES_WEB_DIR` is set but `HERMES_WEB_BUNDLE` is missing, the script
+   fails before restarting anything. If `HERMES_WEB_DIR` is unset, the web step
+   is skipped and a backend-only deploy is still valid.
+
+5. **Confirm.**
 
    ```sh
    curl -s http://127.0.0.1:3000/health
    ```
 
    ```json
-   {"status":"ok","service":"hermes-be","message":"Backend is running","version":"0.3.0","commit":"<sha>"}
+   {"status":"ok","service":"hermes-be","message":"Backend is running","version":"0.4.0","commit":"<sha>"}
    ```
+
+   Clients on the tailnet open **`http://ying-1:PORT/`** (port from the instance
+   env file, `3000` for `p1`). REST, `/ws`, and the SPA are the same origin, so
+   the bundle can derive its API base URL from `window.location.origin` and
+   there is no CORS.
 
 ### Migrations
 
@@ -127,8 +152,10 @@ Redeploy the previous tag:
 sudo ./scripts/deploy.sh p1 v0.2.0
 ```
 
-There is no automated rollback in v0.3.0. It arrives in v0.5.0, wired to a failed
-health check.
+There is no automated rollback in v0.4.0. It arrives in v0.5.0, wired to a failed
+health check. A rollback of a release that shipped a web bundle needs
+`HERMES_WEB_BUNDLE` pointing at that tag's `apps/web/build` as well, so the SPA
+and the API stay paired.
 
 ## Environment variables
 
@@ -144,7 +171,7 @@ template, carrying `p1`'s values.
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Values that are not a positive number fall back to the default. |
 | `LOG_LEVEL` | `info` | Pino level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`. JSON to stdout. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. `deploy.sh` rewrites this on every deploy; no need to set it by hand. Unset means `/health` asks git, then reports `unknown`. |
-| `HERMES_WEB_DIR` | unset | Static web bundle directory. **Arrives in v0.4.0** and is commented out in the example; unset is a no-op. |
+| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle, served from this same process. Unset is a no-op (backend-only). `p1` uses `/var/lib/hermes/p1/web`. When this is set, `deploy.sh` requires `HERMES_WEB_BUNDLE`. |
 
 Note that `HERMES_SESSION_TTL_DAYS` is now the real logout interval. Before
 v0.3.0 tokens lived in an in-memory `Map`, so every restart signed everyone out;
@@ -152,6 +179,11 @@ sessions are rows in SQLite now and survive restarts.
 
 The systemd `EnvironmentFile` format is not shell: no `export`, no command
 substitution, and quotes are only needed for values containing spaces.
+
+`HERMES_WEB_BUNDLE` is **not** in the env file. It is an argument to
+`scripts/deploy.sh` for this release: the path to a built `apps/web/build`
+directory, or a `.tar.gz` of it. v0.5.0 replaces that with a download from the
+matching hermes-fe GitHub Release.
 
 ## Service status and logs
 

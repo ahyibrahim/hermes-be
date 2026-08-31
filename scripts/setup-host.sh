@@ -154,7 +154,7 @@ code in ${CODE_DIR}/hermes-be yet.
 
 Next:
   1. review ${ENV_FILE}
-  2. deploy a tag:  ./scripts/deploy.sh ${INSTANCE} v0.3.0
+  2. deploy a tag:  ./scripts/deploy.sh ${INSTANCE} v0.4.0
   3. check it:      systemctl status hermes-be@${INSTANCE}
                     journalctl -u hermes-be@${INSTANCE} -f
 DONE
