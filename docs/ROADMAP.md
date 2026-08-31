@@ -226,9 +226,10 @@ Two independent tracks in two repos; they can proceed in either order.
   at build time. The bundle is served same-origin, so one artifact then works
   unmodified against `p1` or a future `s1` on a different port.
 - Backend: an `@fastify/static` mount on `HERMES_WEB_DIR` that is a no-op when
-  unset, so the bundle is served from the same origin as the API.
+  unset, so the bundle is served from the same origin as the API. Shipped in
+  v0.4.0.
 - Extend `deploy.sh` to unpack a web bundle into `HERMES_WEB_DIR`, still invoked
-  manually.
+  manually. Shipped in v0.4.0.
 - Tag `v0.4.0`. This is the first release where hermes-fe ships two artifacts
   from one repo.
 

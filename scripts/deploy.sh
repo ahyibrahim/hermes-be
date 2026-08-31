@@ -3,7 +3,7 @@
 # Deploy a hermes-be tag to one instance.
 #
 #   sudo ./scripts/deploy.sh <instance> <tag>
-#   sudo ./scripts/deploy.sh p1 v0.3.0
+#   sudo ./scripts/deploy.sh p1 v0.4.0
 #
 # Checks the tag out into /srv/hermes/<instance>/hermes-be, installs, builds,
 # restarts hermes-be@<instance> and then polls /health until it reports the
@@ -31,12 +31,15 @@ usage() {
 usage: sudo $0 <instance> <tag>
 
   instance   systemd template instance, e.g. p1
-  tag        git tag to deploy, e.g. v0.3.0
+  tag        git tag to deploy, e.g. v0.4.0
 
 environment:
   HERMES_REPO_URL         git remote to fetch from
                           (default https://github.com/ahyibrahim/hermes-be.git)
   HERMES_HEALTH_TIMEOUT   seconds to wait for /health (default 90)
+  HERMES_WEB_BUNDLE       path to the SvelteKit apps/web/build directory, or a
+                          .tar.gz of it. Required when HERMES_WEB_DIR is set
+                          in the instance env file; ignored when it is unset.
 USAGE
   exit 2
 }
@@ -170,12 +173,75 @@ build_backend() {
 }
 
 install_web_bundle() {
-  # v0.4.0 seam. The SvelteKit bundle is built in hermes-fe and published as a
-  # release asset; this is where it gets downloaded and unpacked into
-  # HERMES_WEB_DIR, and where v0.5.0 adds the retry-with-backoff, because the
-  # two repos release independently and the asset may still be uploading.
-  # Nothing to do until HERMES_WEB_DIR and the @fastify/static mount exist.
-  :
+  # v0.4.0: the operator points HERMES_WEB_BUNDLE at a built apps/web/build
+  # directory (or a .tar.gz of it) and this copies it into HERMES_WEB_DIR.
+  #
+  # v0.5.0 seam: download the matching hermes-fe release asset from GitHub
+  # and retry with backoff (the two repos release independently, so the
+  # asset may still be uploading) instead of requiring HERMES_WEB_BUNDLE
+  # on the operator's command line.
+  step "Installing web bundle"
+
+  local web_dir
+  web_dir="$(env_file_value HERMES_WEB_DIR)"
+  if [[ -z "$web_dir" ]]; then
+    info "HERMES_WEB_DIR is unset in ${ENV_FILE}; skipping web bundle (backend-only deploy)"
+    return 0
+  fi
+
+  if [[ -z "${HERMES_WEB_BUNDLE:-}" ]]; then
+    fail "HERMES_WEB_DIR is set (${web_dir}) but HERMES_WEB_BUNDLE is missing. Point it at the SvelteKit build output (or a .tar.gz of it), e.g. sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build $0 ${INSTANCE} ${TAG}"
+  fi
+
+  local bundle="$HERMES_WEB_BUNDLE"
+  [[ -e "$bundle" ]] || fail "HERMES_WEB_BUNDLE=${bundle} does not exist"
+
+  info "installing ${bundle} into ${web_dir}"
+
+  local parent staging
+  parent="$(dirname "$web_dir")"
+  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$parent"
+  staging="$(mktemp -d "${parent}/web.staging.XXXXXX")"
+
+  if [[ -d "$bundle" ]]; then
+    cp -a "$bundle"/. "$staging"/
+  elif [[ -f "$bundle" && ( "$bundle" == *.tar.gz || "$bundle" == *.tgz ) ]]; then
+    tar -xzf "$bundle" -C "$staging"
+  else
+    rm -rf "$staging"
+    fail "HERMES_WEB_BUNDLE=${bundle} must be a directory or a .tar.gz"
+  fi
+
+  # tar czf web.tar.gz build  wraps index.html in a single top-level directory.
+  if [[ ! -f "${staging}/index.html" ]]; then
+    local -a kids=()
+    local child
+    for child in "${staging}"/*; do
+      [[ -e "$child" ]] || continue
+      kids+=("$child")
+    done
+    if [[ ${#kids[@]} -eq 1 && -d "${kids[0]}" && -f "${kids[0]}/index.html" ]]; then
+      info "using nested $(basename "${kids[0]}")/ as the bundle root"
+      local inner="${kids[0]}"
+      local flat="${parent}/web.flatten.$$"
+      mv "$inner" "$flat"
+      rm -rf "$staging"
+      mv "$flat" "$staging"
+    fi
+  fi
+
+  if [[ ! -f "${staging}/index.html" ]]; then
+    rm -rf "$staging"
+    fail "web bundle has no index.html; expected a SvelteKit apps/web/build directory"
+  fi
+
+  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$web_dir"
+  # Replace contents so hashed assets from the previous release do not linger.
+  find "$web_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  cp -a "$staging"/. "$web_dir"/
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$web_dir"
+  rm -rf "$staging"
+  info "web bundle installed at ${web_dir}"
 }
 
 run_migrations() {

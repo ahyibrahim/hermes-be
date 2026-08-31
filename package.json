@@ -1,6 +1,6 @@
 {
   "name": "hermes-be",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -13,6 +13,7 @@
   "//test:integration": "npm run test:integration is NOT part of npm test. It requires a hermes-be already listening on port 3456 (override with PORT) and targets the v0.6.0 API surface, so it fails against the current server by design. Point it at a throwaway HERMES_DB_PATH, never at real history.",
   "dependencies": {
     "@fastify/multipart": "^8.3.1",
+    "@fastify/static": "^7.0.4",
     "@fastify/websocket": "^10.0.0",
     "better-sqlite3": "^11.0.0",
     "fastify": "^4.25.2",
