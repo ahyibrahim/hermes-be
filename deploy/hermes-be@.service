@@ -1,0 +1,71 @@
+# hermes-be, as a systemd *template* unit.
+#
+# The trailing @ makes this a template: it is never started directly, only as an
+# instance, where %i is the instance name.
+#
+#   sudo install -m 0644 deploy/hermes-be@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hermes-be@p1
+#
+# `p1` is the only instance that exists today. `s1` is added just before the
+# v0.6.0 room-membership migration, purely to rehearse that migration on a copy
+# of p1's data before p1 is touched; standing it up is one env file plus one
+# `systemctl enable hermes-be@s1`, which is the whole reason this is a template
+# rather than a single unit.
+#
+# Per instance, %i selects:
+#   /etc/hermes/%i.env              environment (PORT, HERMES_DB_PATH, ...)
+#   /srv/hermes/%i/hermes-be        code checkout, read-only at runtime
+#   /var/lib/hermes/%i              database and uploads, the only writable path
+#
+# See docs/DEPLOY.md and docs/adr/0002-deployment-topology.md.
+
+[Unit]
+Description=Hermes backend (instance %i)
+Documentation=https://github.com/ahyibrahim/hermes-be/blob/main/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+# Give up after 5 failed starts in 5 minutes rather than restarting forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+
+EnvironmentFile=/etc/hermes/%i.env
+WorkingDirectory=/srv/hermes/%i/hermes-be
+ExecStart=/usr/bin/node dist/server.js
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+SyslogIdentifier=hermes-be@%i
+
+# Hardening. ProtectSystem=strict mounts the entire filesystem read-only apart
+# from /dev, /proc and /sys, so ReadWritePaths below is what lets the process
+# write hermes.db and uploaded files. Those two directives are a pair: dropping
+# ReadWritePaths makes the service fail on its first write, and dropping
+# ProtectSystem makes ReadWritePaths pointless.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+# Deliberately NOT MemoryDenyWriteExecute=true: V8 needs writable-executable
+# pages for its JIT and node will not start without them.
+
+ReadWritePaths=/var/lib/hermes/%i
+
+[Install]
+WantedBy=multi-user.target

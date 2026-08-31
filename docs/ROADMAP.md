@@ -202,6 +202,15 @@ Two independent tracks in two repos; they can proceed in either order.
   `/health` for the expected version.
 - Write `docs/DEPLOY.md` covering the manual runbook and the one-time host
   setup.
+- Enable Fastify's Pino logger: `LOG_LEVEL` from the environment, JSON to
+  stdout for journald, `pino-pretty` as a local-dev-only dependency (TTY
+  stdout only), request ids, error serialization for unhandled route errors
+  and WebSocket errors, and redaction of the `Authorization` header, the
+  `token` query parameter, and any `password` field. Never log message content
+  or file contents. Emit domain events for login success/failure, WebSocket
+  connect/disconnect (including 401), room join, file upload (id, uploader,
+  size, MIME), and each `migrateSchema()` step including no-ops. Document log
+  access in `docs/DEPLOY.md`.
 
 ## v0.4.0 - Web UI MVP
 

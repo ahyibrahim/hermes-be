@@ -29,7 +29,42 @@ test('migrates an older sqlite schema to rooms, members, and message columns', (
     INSERT INTO messages (sender, content) VALUES ('alice', 'legacy hello');
   `);
 
-  migrateSchema(db);
+  const first: Array<Record<string, unknown>> = [];
+  migrateSchema(db, {
+    info(obj) {
+      first.push(obj);
+    },
+  });
+  assert.ok(
+    first.some((row) => row.step === 'rebuild_table' && row.table === 'rooms' && row.applied === true),
+    'legacy rooms without slug are rebuilt'
+  );
+  assert.ok(
+    first.some((row) => row.step === 'rebuild_table' && row.table === 'room_members' && row.applied === true),
+    'legacy room_members without room+username are rebuilt'
+  );
+  assert.ok(
+    first.some((row) => row.step === 'add_column' && row.table === 'messages' && row.column === 'room' && row.applied === true)
+  );
+  assert.ok(
+    first.some((row) => row.step === 'create_table' && row.table === 'users' && row.applied === true)
+  );
+  assert.ok(
+    first.some((row) => row.event === 'migrate' && row.applied === false),
+    'no-op steps are logged on the first pass too'
+  );
+
+  const steps: Array<Record<string, unknown>> = [];
+  migrateSchema(db, {
+    info(obj) {
+      steps.push(obj);
+    },
+  });
+  assert.ok(steps.length > 0, 'second migrateSchema pass still logs');
+  assert.ok(
+    steps.every((row) => row.event === 'migrate' && row.applied === false),
+    'a second pass against an already-migrated schema is all no-ops'
+  );
 
   const rooms = db.prepare('SELECT slug, name FROM rooms ORDER BY id').all() as Array<{ slug: string }>;
   assert.ok(rooms.some((room) => room.slug === 'general'));
