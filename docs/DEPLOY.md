@@ -1,17 +1,61 @@
 # Deploying hermes-be
 
-hermes-be runs on `ying-1` as a systemd service under a dedicated `hermes` user,
-one **instance** per environment. Code for an instance lives in
-`/srv/hermes/<instance>/hermes-be` and its data in `/var/lib/hermes/<instance>/`.
-Neither is the editable checkout at `/home/ai/Workspace/hermes-be`, and that
-separation is the point: a deploy must never touch the working tree, and
-`npm test` must never be able to reach real message history.
+hermes-be runs on `ying-1` (this machine; hostname `YING`) as a systemd service
+under a dedicated `hermes` user, one **instance** per environment. Code for an
+instance lives in `/srv/hermes/<instance>/hermes-be` and its data in
+`/var/lib/hermes/<instance>/`. Neither is the editable checkout at
+`/home/ai/Workspace/hermes-be`, and that separation is the point: a deploy must
+never touch the working tree, and `npm test` must never be able to reach real
+message history.
 
-As of v0.4.0 deploying is still a manual, deliberate act: publish a tag, build
-the hermes-fe SPA, SSH to the host, run one script. See
+There is **no frontend Node process**. `npm run build` in hermes-fe emits static
+files; this process serves them from `HERMES_WEB_DIR`. Root `npm start` in
+hermes-fe is the CLI, not the web UI.
+
+As of v0.4.0 deploying is still a manual, deliberate act: merge the release PRs,
+push a tag on **both** repos, build the hermes-fe SPA, run `setup-host.sh` once
+if the host is not provisioned, then run `deploy.sh`. See
 [what changes in v0.5.0](#what-changes-in-v050) and
 [adr/0002-deployment-topology.md](adr/0002-deployment-topology.md) for why it is
 built in that order. Pushing a tag still does not deploy.
+
+## Local launch (before a tag)
+
+`deploy.sh` checks a **tag** out of GitHub into `/srv/hermes/…`. It ignores the
+editable working tree, so it cannot smoke-test an unmerged PR. Run the release
+branches from the workspaces instead. Use a throwaway database — never
+`/var/lib/hermes` or a live `data/hermes.db`.
+
+Closest to production (one process, same origin as after deploy):
+
+```sh
+cd /home/ai/Workspace/hermes-fe
+npm install
+npm run build
+
+cd /home/ai/Workspace/hermes-be
+npm install
+HERMES_WEB_DIR=/home/ai/Workspace/hermes-fe/apps/web/build \
+HERMES_DB_PATH=/tmp/hermes-local.db \
+HERMES_FILES_DIR=/tmp/hermes-local-files \
+PORT=3000 \
+npm run dev
+```
+
+Open `http://127.0.0.1:3000`. Register, log in, send a message, refresh.
+`GET /health` should report this checkout's `package.json` version. If port 3000
+is already taken, set `PORT=3001` and open that instead.
+
+UI hot-reload (Vite; not what deploy does) — backend in one terminal, then:
+
+```sh
+cd /home/ai/Workspace/hermes-fe
+VITE_HERMES_PROXY_TARGET=http://127.0.0.1:3000 npm run dev:web
+```
+
+Default proxy target is `http://ying-1:3000` (production). Point it at the local
+backend so you do not hit `p1` by accident. hermes-be has no CORS headers, so
+the proxy is the path that works from `localhost`. See the hermes-fe README.
 
 ## The instance model
 
@@ -48,7 +92,13 @@ It is idempotent and safe to re-run. It:
 It does **not** start the service, because there is no code in
 `/srv/hermes/p1/hermes-be` until the first deploy.
 
-Review `/etc/hermes/p1.env` afterwards, particularly `PORT`.
+`deploy.sh` fails immediately if `/etc/hermes/p1.env` is missing
+(`DEPLOY FAILED: /etc/hermes/p1.env does not exist`). Run this setup first.
+
+Review `/etc/hermes/p1.env` afterwards, particularly `PORT`. The example already
+sets `HERMES_WEB_DIR=/var/lib/hermes/p1/web`. If the env file already existed
+from an earlier run, `setup-host.sh` will not overwrite it — add `HERMES_WEB_DIR`
+and `LOG_LEVEL=info` by hand if they are absent.
 
 ### Optional: seeding an existing database
 
@@ -69,21 +119,26 @@ unset unless you know there is a database worth carrying over.
 
 ## Deploy runbook
 
-1. **Pick or publish a tag.** Deploys are always by tag, never by branch. Tag on
-   the release branch and push the tag:
+1. **Merge the release PRs, then tag both repos.** Deploys are always by tag,
+   never by branch. `deploy.sh` fetches the **hermes-be** tag from GitHub
+   (`https://github.com/ahyibrahim/hermes-be.git` unless `HERMES_REPO_URL` is
+   set); it does not use `/home/ai/Workspace/hermes-be`. Tag after merge so the
+   tag matches `main`:
 
    ```sh
    git tag v0.4.0
    git push origin v0.4.0
    ```
 
-   Pushing a tag does not deploy anything, in this release or later ones.
+   Do this in **hermes-be and hermes-fe**. Pushing a tag does not deploy
+   anything, in this release or later ones.
 
 2. **Build the web UI** in a hermes-fe checkout (SvelteKit `adapter-static`).
-   The artifact is `apps/web/build`:
+   The artifact is `apps/web/build`. There is nothing to `npm start` on the
+   frontend:
 
    ```sh
-   cd /path/to/hermes-fe
+   cd /home/ai/Workspace/hermes-fe
    npm run build
    ```
 
@@ -91,18 +146,21 @@ unset unless you know there is a database worth carrying over.
    `HERMES_WEB_DIR`. Skip this step only for a backend-only instance, where
    `HERMES_WEB_DIR` is unset in `/etc/hermes/<instance>.env`.
 
-3. **SSH to the host.**
+3. **On the host.** `ying-1` is this machine; skip SSH if you are already there.
+   From another device:
 
    ```sh
    ssh ying-1
    ```
 
 4. **Run the deploy.** When `HERMES_WEB_DIR` is set (the default in
-   `deploy/hermes.env.example`), pass the bundle path:
+   `deploy/hermes.env.example`), pass the bundle path. `HERMES_WEB_BUNDLE` is an
+   env var to this script, not a line in `/etc/hermes/p1.env`:
 
    ```sh
    cd /home/ai/Workspace/hermes-be
-   sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build ./scripts/deploy.sh p1 v0.4.0
+   sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
+     ./scripts/deploy.sh p1 v0.4.0
    ```
 
    The script checks the tag out into `/srv/hermes/p1/hermes-be` as the `hermes`
@@ -226,6 +284,15 @@ starts in 5 minutes, so a service that is down and staying down means
 
 ### When something is wrong
 
+- **`DEPLOY FAILED: /etc/hermes/p1.env does not exist`.** Host setup has not
+  been run. `sudo ./scripts/setup-host.sh p1`, then retry the deploy.
+- **`HERMES_WEB_DIR is set … but HERMES_WEB_BUNDLE is missing`.** Pass
+  `HERMES_WEB_BUNDLE` on the `deploy.sh` command, pointing at
+  `hermes-fe/apps/web/build` (or a `.tar.gz` of it). The script stops before
+  restarting the unit.
+- **Git cannot find the tag.** The tag is not on `origin`, or you pointed
+  `HERMES_REPO_URL` at the wrong remote. `deploy.sh` does not deploy the local
+  working tree.
 - **`/health` reports the old version or commit.** The restart did not pick up
   the new build, or the build did not land. Check
   `journalctl -u hermes-be@p1 -n 50` and that

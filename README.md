@@ -9,7 +9,21 @@ npm install
 npm run dev
 ```
 
-Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`.
+Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`. Do not point those at `/var/lib/hermes` — that is the production instance.
+
+To exercise the web UI the same way production does (one process, same origin), build hermes-fe first and point `HERMES_WEB_DIR` at `apps/web/build`. Use a throwaway database so a local run cannot touch live history:
+
+```sh
+cd /home/ai/Workspace/hermes-fe && npm run build
+
+cd /home/ai/Workspace/hermes-be
+HERMES_WEB_DIR=/home/ai/Workspace/hermes-fe/apps/web/build \
+HERMES_DB_PATH=/tmp/hermes-local.db \
+HERMES_FILES_DIR=/tmp/hermes-local-files \
+npm run dev
+```
+
+Open `http://127.0.0.1:3000`. There is no frontend `npm start` — that command in hermes-fe is the CLI. For Vite hot-reload instead, see the hermes-fe README (`npm run dev:web`). Full host setup and tagged deploys are in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -161,16 +175,17 @@ The CLI should:
 
 ## Deploy
 
-[docs/DEPLOY.md](docs/DEPLOY.md) is the runbook. In short: the host runs `hermes-be@p1`, a systemd template unit under a `hermes` service user, with code in `/srv/hermes/p1/hermes-be` and data in `/var/lib/hermes/p1/` — deliberately not this checkout.
+[docs/DEPLOY.md](docs/DEPLOY.md) is the runbook (local smoke-test, one-time host setup, tagged deploy). In short: the host runs `hermes-be@p1`, a systemd template unit under a `hermes` service user, with code in `/srv/hermes/p1/hermes-be` and data in `/var/lib/hermes/p1/` — deliberately not this checkout. The web UI is static files served from this same process; there is no second Node service.
 
 ```sh
-sudo ./scripts/setup-host.sh p1     # once, needs root
-sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build \
+sudo ./scripts/setup-host.sh p1     # once, needs root; creates /etc/hermes/p1.env
+# then, after the release tags exist on origin:
+sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
   ./scripts/deploy.sh p1 v0.4.0     # per release
 journalctl -u hermes-be@p1 -f
 ```
 
-`deploy.sh` checks out the tag, builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
+`setup-host.sh` must run before the first `deploy.sh` or the deploy fails with a missing env file. `deploy.sh` checks out the **GitHub tag** (not this working tree), builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. In v0.5.0 the same script gets called by a GitHub Actions job on a self-hosted runner, triggered by publishing a Release; pushing a tag alone will still not deploy.
 
 ## Roadmap
 
