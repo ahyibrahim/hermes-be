@@ -311,9 +311,11 @@ label until then.
 - Avatars next to usernames in lists
   ([fe#29](https://github.com/ahyibrahim/hermes-fe/issues/29)), a hover card
   with avatar, role and profile summary
-  ([fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30)), and a small
+  ([fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30)), a small
   in-house web component set to share that UI (no third-party library; ADR 0001)
-  ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31)).
+  ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31)), and centering /
+  cropping a photo before it is set as the avatar
+  ([fe#33](https://github.com/ahyibrahim/hermes-fe/issues/33)).
 - Flesh out member roles beyond the v0.7.0 label: what an admin may do, how
   someone becomes admin after the first user, more roles if needed
   ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)). Delete a group
