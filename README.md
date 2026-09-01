@@ -34,6 +34,7 @@ Open `http://127.0.0.1:3000`. There is no frontend `npm start` — that command 
 | `LOG_LEVEL` | `info` | Pino level (`fatal` … `silent`). JSON to stdout; pretty-print only on a TTY. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. Set by `scripts/deploy.sh`; falls back to asking git, then to `unknown`. |
 | `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle. When set to an existing directory, this process serves the web UI (and SPA client routes) from the same origin as the API and `/ws`. Unset, or a path that does not exist, is a no-op. |
+| `HERMES_ICE_SERVERS` | Google STUN | JSON array of ICE servers for `GET /ice`. Default `[{"urls":"stun:stun.l.google.com:19302"}]`. TURN is not shipped in this release. |
 
 Production instances read these from `/etc/hermes/<instance>.env`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -53,7 +54,7 @@ npm run build
 
 ## Current status
 
-Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history. When `HERMES_WEB_DIR` is set to an existing directory, this same process also serves the web UI so REST, `/ws`, and the SPA share one origin.
+Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history. Per-room voice calls are signaled over `/ws` (`join_call`, SDP, ICE); media is peer-to-peer. `GET /ice` returns STUN servers. When `HERMES_WEB_DIR` is set to an existing directory, this same process also serves the web UI so REST, `/ws`, and the SPA share one origin.
 
 ## Auth
 
@@ -81,6 +82,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
 | POST | `/users/me/avatar` | Bearer | Image multipart (`png`/`jpeg`/`webp`/`gif`, 25MB). |
 | GET | `/users/:id/avatar` | Bearer | Any authenticated user. Not gated on room membership. |
 | GET | `/users/online` | Bearer | Usernames with an open WebSocket, sorted. |
+| GET | `/ice` | Bearer | `{ iceServers }` for WebRTC. From `HERMES_ICE_SERVERS` or the default STUN URL. |
 | POST | `/auth/logout` | Bearer | Deletes the current session. `{ ok: true }` |
 | GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
 | POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Sender is the token username. |
@@ -94,7 +96,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
@@ -158,6 +160,16 @@ The connection stays open after 101 until the client closes it or auth fails. Do
 
 `send_message` does **not** insert a row. Persist with `POST /messages` only. The CLI currently POSTs and then sends `send_message`; the second call is ignored so history is not duplicated.
 
+Call membership is independent of `join_room`. `join_call` / `leave_call` require an existing room membership and route signaling by username on the open socket. Offers, answers, and ICE candidates are relayed only to `to` (who must be in that call). Audio never traverses the server.
+
+```json
+{ "type": "join_call", "room": "general" }
+{ "type": "leave_call", "room": "general" }
+{ "type": "call_offer", "room": "general", "to": "bob", "sdp": { "type": "offer", "sdp": "..." } }
+{ "type": "call_answer", "room": "general", "to": "alice", "sdp": { "type": "answer", "sdp": "..." } }
+{ "type": "ice_candidate", "room": "general", "to": "bob", "candidate": { "candidate": "...", "sdpMid": "0" } }
+```
+
 ### Server → client
 
 ```json
@@ -168,6 +180,13 @@ The connection stays open after 101 until the client closes it or auth fails. Do
 { "type": "user_left", "room": "general", "user": "bob" }
 { "type": "message", "message": { "id": 1, "room": "general", "sender": "alice", "content": "hello", "created_at": "<iso>", "file_id": null } }
 { "type": "error", "content": "<reason>", "message": "<reason>" }
+{ "type": "call_peers", "room": "general", "users": ["alice", "bob"] }
+{ "type": "user_joined_call", "room": "general", "user": "bob" }
+{ "type": "user_left_call", "room": "general", "user": "bob" }
+{ "type": "left_call", "room": "general" }
+{ "type": "call_offer", "room": "general", "from": "alice", "to": "bob", "sdp": { "type": "offer", "sdp": "..." } }
+{ "type": "call_answer", "room": "general", "from": "bob", "to": "alice", "sdp": { "type": "answer", "sdp": "..." } }
+{ "type": "ice_candidate", "room": "general", "from": "alice", "to": "bob", "candidate": { "candidate": "...", "sdpMid": "0" } }
 ```
 
 `error` uses `content` (and `message` with the same string for older CLIs).
