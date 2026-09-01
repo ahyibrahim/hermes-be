@@ -39,6 +39,11 @@ type RoomSocket = {
   user: string;
 };
 
+type TrackedSocket = {
+  socket: RoomSocket['socket'];
+  user: string;
+};
+
 const WS_OPEN = 1;
 const PING_INTERVAL_MS = 30_000;
 const PONG_TIMEOUT_MS = 60_000;
@@ -57,7 +62,37 @@ const filesDir = process.env.HERMES_FILES_DIR
 
 // Exact prefixes of the REST/WS surface. `/rooms-ui` is a client route and
 // must not match `/rooms`. Trailing-slash and nested paths (`/files/1`) do.
-const API_PATH_PREFIXES = ['/health', '/auth', '/rooms', '/messages', '/files', '/ws', '/users'];
+const API_PATH_PREFIXES = ['/health', '/auth', '/rooms', '/messages', '/files', '/ws', '/users', '/ice'];
+
+export const DEFAULT_ICE_SERVERS: Array<{ urls: string | string[]; username?: string; credential?: string }> = [
+  { urls: 'stun:stun.l.google.com:19302' },
+];
+
+export function parseIceServers(
+  raw: string | undefined
+): Array<{ urls: string | string[]; username?: string; credential?: string }> {
+  if (!raw || !raw.trim()) {
+    return DEFAULT_ICE_SERVERS;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return DEFAULT_ICE_SERVERS;
+    }
+
+    const servers = parsed.filter(
+      (item): item is { urls: string | string[]; username?: string; credential?: string } =>
+        Boolean(item) &&
+        typeof item === 'object' &&
+        (typeof (item as { urls?: unknown }).urls === 'string' ||
+          Array.isArray((item as { urls?: unknown }).urls))
+    );
+    return servers.length > 0 ? servers : DEFAULT_ICE_SERVERS;
+  } catch {
+    return DEFAULT_ICE_SERVERS;
+  }
+}
 
 function isApiRequestPath(url: string): boolean {
   const pathname = url.split('?')[0] || '/';
@@ -181,6 +216,7 @@ export type CreateAppOptions = {
 export async function createApp(options: CreateAppOptions = {}): Promise<{
   app: FastifyInstance;
   roomClients: Map<string, Set<RoomSocket>>;
+  callMembers: Map<string, Set<string>>;
 }> {
   const fastify = Fastify({
     logger: buildLoggerConfig({
@@ -192,6 +228,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     requestIdLogLabel: 'reqId',
   });
   const roomClients = new Map<string, Set<RoomSocket>>();
+  const userSockets = new Map<string, Set<TrackedSocket>>();
+  const callMembers = new Map<string, Set<string>>();
   const lastPong = new WeakMap<object, number>();
 
   getDb({
@@ -254,6 +292,99 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         clients.delete(client);
       }
     }
+  }
+
+  function sendToUser(username: string, payload: unknown): void {
+    const sockets = userSockets.get(username);
+    if (!sockets) {
+      return;
+    }
+
+    for (const entry of [...sockets]) {
+      if (entry.socket.readyState !== undefined && entry.socket.readyState !== WS_OPEN) {
+        sockets.delete(entry);
+        continue;
+      }
+
+      if (!sendJson(entry.socket, payload)) {
+        sockets.delete(entry);
+      }
+    }
+
+    if (sockets.size === 0) {
+      userSockets.delete(username);
+    }
+  }
+
+  function callRoster(room: string): string[] {
+    const members = callMembers.get(room);
+    if (!members) {
+      return [];
+    }
+    return [...members].sort((a, b) => a.localeCompare(b));
+  }
+
+  function broadcastCall(room: string, payload: unknown, exceptUser?: string): void {
+    const members = callMembers.get(room);
+    if (!members) {
+      return;
+    }
+
+    for (const name of members) {
+      if (exceptUser && name === exceptUser) {
+        continue;
+      }
+      sendToUser(name, payload);
+    }
+  }
+
+  function removeFromCall(room: string, username: string, notifyLeaver: boolean): void {
+    const members = callMembers.get(room);
+    if (!members?.has(username)) {
+      return;
+    }
+
+    members.delete(username);
+    if (members.size === 0) {
+      callMembers.delete(room);
+    }
+
+    broadcastCall(room, { type: 'user_left_call', room, user: username });
+    if (notifyLeaver) {
+      sendToUser(username, { type: 'left_call', room });
+    }
+  }
+
+  function leaveAllCalls(username: string): void {
+    for (const room of [...callMembers.keys()]) {
+      removeFromCall(room, username, false);
+    }
+  }
+
+  function attachUserSocket(user: string, socket: TrackedSocket['socket']): TrackedSocket {
+    const entry: TrackedSocket = { socket, user };
+    if (!userSockets.has(user)) {
+      userSockets.set(user, new Set());
+    }
+    userSockets.get(user)?.add(entry);
+    return entry;
+  }
+
+  function detachUserSocket(entry: TrackedSocket | null): void {
+    if (!entry) {
+      return;
+    }
+
+    const sockets = userSockets.get(entry.user);
+    sockets?.delete(entry);
+    if (!sockets || sockets.size === 0) {
+      userSockets.delete(entry.user);
+      leaveAllCalls(entry.user);
+    }
+  }
+
+  function onlineUsernames(): string[] {
+    return [...userSockets.keys()].sort((a, b) => a.localeCompare(b));
   }
 
   function resolveUser(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -365,13 +496,16 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'authentication required' };
     }
 
-    const online = new Set<string>();
-    for (const clients of roomClients.values()) {
-      for (const client of clients) {
-        online.add(client.user);
-      }
+    return onlineUsernames();
+  });
+
+  fastify.get('/ice', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
     }
-    return [...online].sort((a, b) => a.localeCompare(b));
+
+    return { iceServers: parseIceServers(process.env.HERMES_ICE_SERVERS) };
   });
 
   fastify.get('/users/me', async (request, reply) => {
@@ -765,9 +899,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       let room: string | null = null;
       let user = (request as FastifyRequest & { username?: string }).username ?? '';
       let client: RoomSocket | null = null;
+      let userEntry: TrackedSocket | null = null;
 
       lastPong.set(socket, Date.now());
       if (user) {
+        userEntry = attachUserSocket(user, socket);
         request.log.info({ event: 'ws_connect', user }, 'websocket connected');
       }
 
@@ -786,12 +922,45 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         broadcastToRoom(leftRoom, { type: 'user_left', room: leftRoom, user: leftUser });
       };
 
+      const bindUser = (username: string) => {
+        user = username;
+        if (!userEntry) {
+          userEntry = attachUserSocket(user, socket);
+        } else {
+          userEntry.user = user;
+        }
+      };
+
       const requireUser = (): boolean => {
         if (user) {
           return true;
         }
         sendJson(socket, errorFrame('authentication required'));
         return false;
+      };
+
+      const requireCallTarget = (
+        payload: { room?: string; to?: unknown }
+      ): { slug: string; to: string } | null => {
+        const slug = normalizeRoomSlug(payload.room);
+        const to = typeof payload.to === 'string' ? payload.to.trim().toLowerCase() : '';
+        if (!slug || !to) {
+          sendJson(socket, errorFrame('room and to are required'));
+          return null;
+        }
+
+        const members = callMembers.get(slug);
+        if (!members?.has(user) || !members.has(to)) {
+          sendJson(socket, errorFrame('not in that call'));
+          return null;
+        }
+
+        if (to === user) {
+          sendJson(socket, errorFrame('cannot signal to yourself'));
+          return null;
+        }
+
+        return { slug, to };
       };
 
       if (user) {
@@ -815,7 +984,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
                 socket.close?.();
                 return;
               }
-              user = username;
+              bindUser(username);
               sendJson(socket, { type: 'connected', user });
               request.log.info({ event: 'ws_connect', user }, 'websocket connected');
             }
@@ -858,6 +1027,98 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
             return;
           }
 
+          if (payload.type === 'join_call') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const slug = normalizeRoomSlug(payload.room);
+            if (!slug) {
+              sendJson(socket, errorFrame('room must be a slug, not a numeric id'));
+              return;
+            }
+
+            if (!isRoomMember(slug, user)) {
+              sendJson(socket, errorFrame('not a member of that room'));
+              return;
+            }
+
+            for (const otherRoom of [...callMembers.keys()]) {
+              if (otherRoom !== slug && callMembers.get(otherRoom)?.has(user)) {
+                removeFromCall(otherRoom, user, true);
+              }
+            }
+
+            if (!callMembers.has(slug)) {
+              callMembers.set(slug, new Set());
+            }
+            const already = callMembers.get(slug)?.has(user) === true;
+            callMembers.get(slug)?.add(user);
+
+            sendJson(socket, { type: 'call_peers', room: slug, users: callRoster(slug) });
+            if (!already) {
+              broadcastCall(slug, { type: 'user_joined_call', room: slug, user }, user);
+              request.log.info({ event: 'call_join', user, room: slug }, 'joined call');
+            }
+            return;
+          }
+
+          if (payload.type === 'leave_call') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const slug = normalizeRoomSlug(payload.room);
+            if (!slug) {
+              sendJson(socket, errorFrame('room must be a slug, not a numeric id'));
+              return;
+            }
+
+            removeFromCall(slug, user, true);
+            request.log.info({ event: 'call_leave', user, room: slug }, 'left call');
+            return;
+          }
+
+          if (payload.type === 'call_offer' || payload.type === 'call_answer') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const target = requireCallTarget(payload);
+            if (!target) {
+              return;
+            }
+
+            sendToUser(target.to, {
+              type: payload.type,
+              room: target.slug,
+              from: user,
+              to: target.to,
+              sdp: payload.sdp,
+            });
+            return;
+          }
+
+          if (payload.type === 'ice_candidate') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const target = requireCallTarget(payload);
+            if (!target) {
+              return;
+            }
+
+            sendToUser(target.to, {
+              type: 'ice_candidate',
+              room: target.slug,
+              from: user,
+              to: target.to,
+              candidate: payload.candidate ?? null,
+            });
+            return;
+          }
+
           sendJson(socket, errorFrame('unknown message type'));
         } catch (error) {
           request.log.warn(
@@ -876,6 +1137,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
           'websocket error'
         );
         leaveCurrentRoom();
+        detachUserSocket(userEntry);
+        userEntry = null;
       });
 
       socket.on('close', () => {
@@ -884,6 +1147,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
           'websocket disconnected'
         );
         leaveCurrentRoom();
+        detachUserSocket(userEntry);
+        userEntry = null;
       });
     }
   );
@@ -892,19 +1157,42 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
   const pingTimer = setInterval(() => {
     const now = Date.now();
+    const pinged = new Set<object>();
+
+    const pingOne = (socket: RoomSocket['socket'], onDead: () => void) => {
+      if (pinged.has(socket)) {
+        return;
+      }
+      pinged.add(socket);
+      const seen = lastPong.get(socket) ?? 0;
+      if (now - seen > PONG_TIMEOUT_MS) {
+        onDead();
+        return;
+      }
+
+      try {
+        socket.ping?.();
+      } catch {
+        onDead();
+      }
+    };
+
+    for (const sockets of userSockets.values()) {
+      for (const entry of [...sockets]) {
+        pingOne(entry.socket, () => {
+          try {
+            entry.socket.terminate?.();
+          } catch {
+            // already closed
+          }
+          detachUserSocket(entry);
+        });
+      }
+    }
+
     for (const clients of roomClients.values()) {
       for (const client of [...clients]) {
-        const seen = lastPong.get(client.socket) ?? 0;
-        if (now - seen > PONG_TIMEOUT_MS) {
-          dropClient(client);
-          continue;
-        }
-
-        try {
-          client.socket.ping?.();
-        } catch {
-          dropClient(client);
-        }
+        pingOne(client.socket, () => dropClient(client));
       }
     }
   }, PING_INTERVAL_MS);
@@ -914,5 +1202,5 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     clearInterval(pingTimer);
   });
 
-  return { app: fastify, roomClients };
+  return { app: fastify, roomClients, callMembers };
 }
