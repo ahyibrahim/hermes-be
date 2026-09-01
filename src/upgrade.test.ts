@@ -64,17 +64,17 @@ test('an already-populated pre-v0.3.0 database opens cleanly and its users can l
   const { findSessionUser } = await import('./sessions');
   const { listMessages } = await import('./db');
 
-  const session = loginUser('legacy', 'hunter2');
+  const session = await loginUser('legacy', 'hunter2');
   assert.ok(session?.token, 'a user registered by the old code path must still be able to log in');
   assert.equal(session?.username, 'legacy');
   assert.equal(findSessionUser(session!.token), 'legacy');
-  assert.equal(loginUser('legacy', 'wrong'), null);
+  assert.equal(await loginUser('legacy', 'wrong'), null);
 
   const history = listMessages('general');
   assert.equal(history.length, 1);
   assert.equal(history[0].content, 'history from before the upgrade');
 
-  const fresh = registerUser('newcomer', 'hunter2');
+  const fresh = await registerUser('newcomer', 'hunter2');
   assert.equal(fresh.username, 'newcomer');
 
   const users = getDb().prepare('SELECT username FROM users ORDER BY id').all() as Array<{
@@ -97,7 +97,7 @@ test('a users table created without created_at gets the column backfilled', asyn
   closeDb();
 
   const { loginUser } = await import('./auth');
-  assert.ok(loginUser('legacy', 'hunter2')?.token);
+  assert.ok((await loginUser('legacy', 'hunter2'))?.token);
 
   const row = getDb().prepare('SELECT created_at FROM users WHERE username = ?').get('legacy') as {
     created_at: string | null;

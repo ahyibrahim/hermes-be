@@ -2,6 +2,7 @@ import './runtime-compat';
 import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import websocket from '@fastify/websocket';
 import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,13 +22,14 @@ import {
   addUserToGeneralRoom,
   createGroupRoom,
   getOrCreateDmRoom,
+  getUserById,
   getUserByUsername,
   listRoomsForUser,
   listUsers,
 } from './rooms';
-import { loginUser, registerUser } from './auth';
+import { changePassword, getProfile, loginUser, registerUser, setAvatarFileId } from './auth';
 import { getDb } from './database';
-import { deleteSession, findSessionUser } from './sessions';
+import { deleteOtherSessions, deleteSession, findSessionUser } from './sessions';
 import { buildInfo } from './build-info';
 import { buildLoggerConfig, type LogDestination } from './logger';
 
@@ -41,6 +43,13 @@ const WS_OPEN = 1;
 const PING_INTERVAL_MS = 30_000;
 const PONG_TIMEOUT_MS = 60_000;
 const FILE_SIZE_LIMIT = 25 * 1024 * 1024;
+const AVATAR_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+
+function authRateLimitConfig(): { max: number; timeWindow: string } {
+  const raw = Number(process.env.HERMES_AUTH_RATE_MAX);
+  const max = Number.isFinite(raw) && raw > 0 ? raw : 10;
+  return { max, timeWindow: '1 minute' };
+}
 
 const filesDir = process.env.HERMES_FILES_DIR
   ? path.resolve(process.env.HERMES_FILES_DIR)
@@ -265,6 +274,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
   await fastify.register(websocket);
   await fastify.register(multipart, { limits: { fileSize: FILE_SIZE_LIMIT } });
+  await fastify.register(rateLimit, { global: false, ...authRateLimitConfig() });
 
   if (!fs.existsSync(filesDir)) {
     fs.mkdirSync(filesDir, { recursive: true });
@@ -281,7 +291,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     };
   });
 
-  fastify.post('/auth/register', async (request, reply) => {
+  fastify.post(
+    '/auth/register',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
     const body = request.body as { username?: string; password?: string };
 
     if (!body.username || !body.password) {
@@ -290,16 +303,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
 
     try {
-      const user = registerUser(body.username, body.password);
+      const user = await registerUser(body.username, body.password);
       addUserToGeneralRoom(user.id);
-      return { user: { id: user.id, username: user.username } };
+      return { user: { id: user.id, username: user.username, role: user.role } };
     } catch (error) {
       reply.code(409);
       return { error: (error as Error).message };
     }
-  });
+    }
+  );
 
-  fastify.post('/auth/login', async (request, reply) => {
+  fastify.post(
+    '/auth/login',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
     const body = request.body as { username?: string; password?: string };
 
     if (!body.username || !body.password) {
@@ -307,7 +324,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'username and password are required' };
     }
 
-    const session = loginUser(body.username, body.password);
+    const session = await loginUser(body.username, body.password);
     if (!session) {
       request.log.info(
         { event: 'login_failure', username: body.username.trim().toLowerCase() },
@@ -319,7 +336,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
     request.log.info({ event: 'login_success', username: session.username }, 'login succeeded');
     return session;
-  });
+    }
+  );
 
   fastify.post('/auth/logout', async (request, reply) => {
     const username = resolveUser(request, reply);
@@ -354,6 +372,126 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       }
     }
     return [...online].sort((a, b) => a.localeCompare(b));
+  });
+
+  fastify.get('/users/me', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const profile = getProfile(username);
+    if (!profile) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+    return profile;
+  });
+
+  fastify.patch('/users/me', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { current_password?: string; password?: string };
+    if (!body.current_password || !body.password || !body.password.trim()) {
+      reply.code(400);
+      return { error: 'current_password and password are required' };
+    }
+
+    try {
+      const ok = await changePassword(username, body.current_password, body.password);
+      if (!ok) {
+        reply.code(401);
+        return { error: 'invalid credentials' };
+      }
+    } catch (error) {
+      reply.code(400);
+      return { error: (error as Error).message };
+    }
+
+    deleteOtherSessions(username, extractToken(request));
+    request.log.info({ event: 'password_change', username }, 'password changed');
+    return { ok: true };
+  });
+
+  fastify.post('/users/me/avatar', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const me = getUserByUsername(username);
+    if (!me) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+
+    const data = await request.file();
+    if (!data) {
+      reply.code(400);
+      return { error: 'file is required' };
+    }
+
+    const mime = data.mimetype || '';
+    if (!AVATAR_TYPES.has(mime)) {
+      data.file.resume();
+      reply.code(415);
+      return { error: 'avatar must be png, jpeg, webp, or gif' };
+    }
+
+    const storedName = `${crypto.randomUUID()}`;
+    const storedPath = path.join(filesDir, storedName);
+    await pipeline(data.file, fs.createWriteStream(storedPath));
+
+    if (data.file.truncated) {
+      fs.rmSync(storedPath, { force: true });
+      reply.code(413);
+      return { error: 'file too large' };
+    }
+
+    const size = fs.statSync(storedPath).size;
+    const file = createFileRecord(
+      `avatar:${username}`,
+      username,
+      data.filename || 'avatar',
+      mime,
+      size,
+      storedPath
+    );
+    setAvatarFileId(me.id, file.id);
+    request.log.info({ event: 'avatar_upload', user: username, id: file.id }, 'avatar uploaded');
+    return getProfile(username);
+  });
+
+  fastify.get('/users/:id/avatar', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400);
+      return { error: 'invalid user id' };
+    }
+
+    const user = getUserById(id);
+    if (!user?.avatar_file_id) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+
+    const file = getFileRecord(user.avatar_file_id);
+    if (!file || !fs.existsSync(file.path)) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+
+    reply.header('Content-Type', file.mime);
+    reply.header('Content-Disposition', 'inline');
+    return reply.send(fs.createReadStream(file.path));
   });
 
   fastify.get('/rooms', async (request, reply) => {

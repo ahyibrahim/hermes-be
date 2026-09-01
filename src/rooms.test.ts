@@ -20,8 +20,8 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
     listRoomsForUser,
   } = await import('./rooms');
 
-  const alice = registerUser('alice', 'hunter2');
-  const bob = registerUser('bob', 'hunter2');
+  const alice = await registerUser('alice', 'hunter2');
+  const bob = await registerUser('bob', 'hunter2');
   addUserToGeneralRoom(alice.id);
   addUserToGeneralRoom(bob.id);
 
