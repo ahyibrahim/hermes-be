@@ -19,6 +19,16 @@ Architecture decisions live in [adr/](adr/):
   unit and manual `deploy.sh` (shipped). CI wiring via a self-hosted runner is
   backlog, blocked on making hermes-be private.
 
+## Status
+
+- [x] v0.2.0 - Cleanup and CLI fix
+- [x] v0.3.0 - Shared core and host foundations
+- [x] v0.4.0 - Web UI MVP
+- [x] v0.6.0 - Rooms and users (shipped on `p1`; `s1` rehearsal skipped)
+- [x] v0.7.0 - Accounts and security (live on `p1`)
+- [ ] v0.8.0 - Voice chat (next; not started)
+- [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
+
 ## Decisions locked in
 
 **Web UI stack.** SvelteKit with `adapter-static` (SPA, no SSR). Keeps the
@@ -98,7 +108,7 @@ graph LR
   v02[v0.2.0 Cleanup and CLI fix — shipped] --> v03[v0.3.0 Shared core and host foundations — shipped]
   v03 --> v04[v0.4.0 Web UI MVP — shipped]
   v04 --> v06[v0.6.0 Rooms and users — shipped]
-  v04 --> v07[v0.7.0 Accounts and security]
+  v04 --> v07[v0.7.0 Accounts and security — shipped]
   v06 --> v08[v0.8.0 Voice chat]
   v07 --> v08
 ```
@@ -260,69 +270,62 @@ runner or add `runs-on: self-hosted` until that issue is closed. Manual
 
 ## v0.6.0 - Rooms and users (shipped)
 
-Live on `p1`. Issues closed: [be#22](https://github.com/ahyibrahim/hermes-be/issues/22),
+Done. Was live on `p1`; superseded by v0.7.0. Issues closed:
+[be#22](https://github.com/ahyibrahim/hermes-be/issues/22),
 [be#23](https://github.com/ahyibrahim/hermes-be/issues/23),
-[fe#17](https://github.com/ahyibrahim/hermes-fe/issues/17). The `s1` rehearsal
-([be#21](https://github.com/ahyibrahim/hermes-be/issues/21)) was skipped; the
-membership rewrite went straight to `p1`. Commands for standing up `s1` later
-remain in [docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup).
+[fe#17](https://github.com/ahyibrahim/hermes-fe/issues/17).
+[be#21](https://github.com/ahyibrahim/hermes-be/issues/21) (`s1` rehearsal)
+was skipped. Commands for standing up `s1` later remain in
+[docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup).
 
-- Group rooms and DMs with membership by `user_id`, plus a real migration from
-  the slug-and-username `room_members` to the FK model, including a backfill
-  for existing rows. (The parked `feat/rooms-dm` branch was too old to merge;
-  this was reimplemented against current `main`.)
-- Endpoints: `GET /users`, `GET /users/online`, `POST /rooms`,
-  `POST /rooms/dm`, `POST /auth/logout`.
-- Web UI: create a room, start a DM, browse users.
-- The v0.6.0 REST contract lives in `src/v06-api.test.ts` and runs as part of
-  `npm test`.
+- [x] Group rooms and DMs with membership by `user_id`, plus a real migration
+      from the slug-and-username `room_members` to the FK model, including a
+      backfill for existing rows
+- [x] Endpoints: `GET /users`, `GET /users/online`, `POST /rooms`,
+      `POST /rooms/dm`, `POST /auth/logout`
+- [x] Web UI: create a room, start a DM, browse users
+- [x] v0.6.0 REST contract in `src/v06-api.test.ts` (`npm test`)
 
-## v0.7.0 - Accounts and security
+## v0.7.0 - Accounts and security (shipped)
 
-Current release. Additive schema (`users.role`, `users.avatar_file_id`); no
-`s1` rehearsal.
+Live on `p1` (`0.7.0` @ `d853135`). Additive schema (`users.role`,
+`users.avatar_file_id`); no `s1` rehearsal. Closed:
+[be#24](https://github.com/ahyibrahim/hermes-be/issues/24),
+[be#25](https://github.com/ahyibrahim/hermes-be/issues/25),
+[fe#18](https://github.com/ahyibrahim/hermes-fe/issues/18).
+[be#26](https://github.com/ahyibrahim/hermes-be/issues/26) (password reset)
+stays open; it did not block this release.
 
-- Replace the unsalted SHA256 in `hashPassword()` with argon2id, rehashing each
-  user transparently on their next successful login
-  ([be#24](https://github.com/ahyibrahim/hermes-be/issues/24)).
-- Profile page: username is **read-only** (login id; DM slugs are
-  `dm:alice:bob`). Change password with current-password confirmation. Avatar
-  upload reusing the existing files infrastructure; any logged-in user can
-  fetch another user's avatar
-  ([fe#18](https://github.com/ahyibrahim/hermes-fe/issues/18)).
-- Role **labels** only: `users.role` is `member` or `admin`. The first
-  registered user is `admin`. Shown on profile and `GET /users`. **No extra
-  powers** in this release.
-- Rate limiting on `/auth/register` and `/auth/login`
-  ([be#25](https://github.com/ahyibrahim/hermes-be/issues/25)).
-- Open question on password reset: with no email infrastructure there is no
-  self-service reset. Options are an admin-issued one-time reset token, a
-  recovery code generated at registration, or adding SMTP
-  ([be#26](https://github.com/ahyibrahim/hermes-be/issues/26)). The profile page
-  covers the common case in the meantime. An admin-issued token depends on
-  fleshed-out roles ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)).
-  This decision does not block tagging v0.7.0.
+- [x] Replace unsalted SHA256 with argon2id; rehash on next successful login
+- [x] Profile page: read-only username, password change, avatar upload
+- [x] Role labels (`member` / `admin`); first user is admin; no extra powers
+- [x] Rate limiting on `/auth/register` and `/auth/login`
+
+Password reset options remain an open question: admin-issued one-time token,
+recovery code at registration, or SMTP
+([be#26](https://github.com/ahyibrahim/hermes-be/issues/26)). An admin-issued
+token depends on fleshed-out roles
+([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)).
 
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
-- Avatars next to usernames in lists
-  ([fe#29](https://github.com/ahyibrahim/hermes-fe/issues/29)), a hover card
-  with avatar, role and profile summary
-  ([fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30)), a small
-  in-house web component set to share that UI (no third-party library; ADR 0001)
-  ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31)), and centering /
-  cropping a photo before it is set as the avatar
-  ([fe#33](https://github.com/ahyibrahim/hermes-fe/issues/33)).
-- Flesh out member roles beyond the v0.7.0 label: what an admin may do, how
-  someone becomes admin after the first user, more roles if needed
-  ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)). Delete a group
-  room ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41)), delete a
-  message ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42)), and an
-  admin-issued password-reset token (option 1 on be#26) depend on this. Do not
-  pull those into v0.7.0.
+- [ ] Avatars next to usernames in lists
+      ([fe#29](https://github.com/ahyibrahim/hermes-fe/issues/29)), a hover card
+      with avatar, role and profile summary
+      ([fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30)), a small
+      in-house web component set to share that UI (no third-party library; ADR 0001)
+      ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31)), and centering /
+      cropping a photo before it is set as the avatar
+      ([fe#33](https://github.com/ahyibrahim/hermes-fe/issues/33))
+- [ ] Flesh out member roles beyond the v0.7.0 label: what an admin may do, how
+      someone becomes admin after the first user, more roles if needed
+      ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)). Delete a group
+      room ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41)), delete a
+      message ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42)), and an
+      admin-issued password-reset token (option 1 on be#26) depend on this.
 
 ## v0.8.0 - Voice chat
 
