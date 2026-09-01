@@ -111,6 +111,33 @@ function backfillEmpty(
   );
 }
 
+function backfillFirstAdmin(db: SqliteDb, log: SchemaLogger): void {
+  const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get() as {
+    n: number;
+  };
+  if (admins.n > 0) {
+    note(log, false, 'backfill', { table: 'users', column: 'role' }, 'an admin user already exists');
+    return;
+  }
+
+  const first = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get() as
+    | { id: number }
+    | undefined;
+  if (!first) {
+    note(log, false, 'backfill', { table: 'users', column: 'role' }, 'no users to promote to admin');
+    return;
+  }
+
+  db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(first.id);
+  note(
+    log,
+    true,
+    'backfill',
+    { table: 'users', column: 'role', userId: first.id },
+    `promoted user ${first.id} to admin`
+  );
+}
+
 const FK_MEMBERS_DDL = `CREATE TABLE room_members (
       room_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
@@ -213,6 +240,8 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      avatar_file_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   );
@@ -284,6 +313,9 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   // than here, so treat every column as possibly absent.
   addColumnIfMissing(db, log, 'users', 'created_at', "TEXT DEFAULT ''");
   backfillEmpty(db, log, 'users', 'created_at');
+  addColumnIfMissing(db, log, 'users', 'role', "TEXT NOT NULL DEFAULT 'member'");
+  addColumnIfMissing(db, log, 'users', 'avatar_file_id', 'INTEGER');
+  backfillFirstAdmin(db, log);
 
   addColumnIfMissing(db, log, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
   addColumnIfMissing(db, log, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");

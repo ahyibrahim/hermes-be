@@ -63,6 +63,19 @@ export function deleteSession(token: string | undefined): boolean {
   return Number(result.changes) > 0;
 }
 
+export function deleteOtherSessions(username: string, keepToken: string | undefined): number {
+  const keep = keepToken?.trim();
+  if (!keep) {
+    const result = getDb().prepare('DELETE FROM sessions WHERE username = ?').run(username);
+    return Number(result.changes);
+  }
+
+  const result = getDb()
+    .prepare('DELETE FROM sessions WHERE username = ? AND token != ?')
+    .run(username, keep);
+  return Number(result.changes);
+}
+
 /**
  * Resolves a bearer token to a username, or null when the token is unknown or
  * expired. An expired row is deleted on the way out.

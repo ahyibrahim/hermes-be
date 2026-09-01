@@ -70,12 +70,16 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
 | Method | Path | Auth | Notes |
 |--------|------|------|--------|
 | GET | `/health` | no | `{ status, service, message, version, commit }` |
-| POST | `/auth/register` | no | `{ username, password }` |
-| POST | `/auth/login` | no | `{ username, password }` → `{ username, token, expires_at }` |
+| POST | `/auth/register` | no | Rate limited. `{ username, password }`. First user is `admin`. |
+| POST | `/auth/login` | no | Rate limited. Rehashes legacy SHA256 passwords to argon2id. |
 | GET | `/rooms` | Bearer | Membership-filtered `[{ id, slug, name, type, created_at, members }]` |
 | POST | `/rooms` | Bearer | `{ name, members?: number[] }` → group room. Creator is always a member. |
 | POST | `/rooms/dm` | Bearer | `{ userId }` → existing or new DM. Idempotent. 400 for self-DM. |
-| GET | `/users` | Bearer | `[{ id, username }]` |
+| GET | `/users` | Bearer | `[{ id, username, role, avatar_file_id }]` |
+| GET | `/users/me` | Bearer | Profile: `{ id, username, role, avatar_file_id }`. |
+| PATCH | `/users/me` | Bearer | `{ current_password, password }`. Keeps this token; drops the rest. |
+| POST | `/users/me/avatar` | Bearer | Image multipart (`png`/`jpeg`/`webp`/`gif`, 25MB). |
+| GET | `/users/:id/avatar` | Bearer | Any authenticated user. Not gated on room membership. |
 | GET | `/users/online` | Bearer | Usernames with an open WebSocket, sorted. |
 | POST | `/auth/logout` | Bearer | Deletes the current session. `{ ok: true }` |
 | GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
@@ -90,7 +94,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```

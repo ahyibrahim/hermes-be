@@ -15,6 +15,8 @@ export interface RoomSummary extends RoomRecord {
 export interface PublicUser {
   id: number;
   username: string;
+  role: 'member' | 'admin';
+  avatar_file_id: number | null;
 }
 
 function membersOf(roomId: number): string[] {
@@ -39,19 +41,19 @@ function toSummary(room: RoomRecord): RoomSummary {
 
 export function getUserByUsername(username: string): PublicUser | undefined {
   return getDb()
-    .prepare('SELECT id, username FROM users WHERE username = ?')
+    .prepare('SELECT id, username, role, avatar_file_id FROM users WHERE username = ?')
     .get(username) as PublicUser | undefined;
 }
 
 export function getUserById(id: number): PublicUser | undefined {
-  return getDb().prepare('SELECT id, username FROM users WHERE id = ?').get(id) as
-    | PublicUser
-    | undefined;
+  return getDb()
+    .prepare('SELECT id, username, role, avatar_file_id FROM users WHERE id = ?')
+    .get(id) as PublicUser | undefined;
 }
 
 export function listUsers(): PublicUser[] {
   return getDb()
-    .prepare('SELECT id, username FROM users ORDER BY username ASC')
+    .prepare('SELECT id, username, role, avatar_file_id FROM users ORDER BY username ASC')
     .all() as PublicUser[];
 }
 
