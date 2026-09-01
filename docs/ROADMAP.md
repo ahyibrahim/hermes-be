@@ -3,8 +3,8 @@
 Hermes is a private messenger for a small group of friends, reachable over the
 local network and Tailscale. It is two repositories: `hermes-be`, a single Node
 process with Fastify, a raw WebSocket channel and SQLite via `better-sqlite3`
-with no ORM; and `hermes-fe`, today a TypeScript readline CLI, which grows a web
-UI over the course of this plan.
+with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
+TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
 v0.8.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
@@ -49,10 +49,11 @@ hermes-fe can stay public (GitHub-hosted builds only).
 **Environments.** A template systemd unit `hermes-be@.service` with per-instance
 environment files from the start, but only `p1` running initially. Data lives
 under `/var/lib/hermes/<instance>/` and checkouts under
-`/srv/hermes/<instance>/`. Standing up `s1` later is one env file and one
-`systemctl enable`, not a refactor. `s1` gets created just before the v0.6.0
-membership migration, which is the one change risky enough to justify a
-rehearsal.
+`/srv/hermes/<instance>/`. Standing up `s1` is one env file and one
+`systemctl enable`, not a refactor. The v0.6.0 membership rewrite is the change
+that justified a rehearsal path; that release is on `p1`. `s1` remains the
+documented path for a future in-place rewrite (see
+[docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup)).
 
 **Issues.** Filed in both repos, split by where the work lives, grouped with
 `release:vX.Y.Z` or `backlog`.
@@ -71,18 +72,14 @@ under `/var/lib/hermes/p1/` (`HERMES_DB_PATH`, `HERMES_FILES_DIR`,
 `HERMES_WEB_DIR`), with a documented one-time copy of the existing database and
 files.
 
-### Untracked backend WIP must be resolved first
+### Untracked backend WIP (resolved in v0.6.0)
 
-`src/rooms.ts` defines a group/DM room model keyed by `room_id`/`user_id` foreign
-keys, which directly conflicts with the committed slug-and-username
-`room_members` table in `src/schema.ts`. It is not wired into `src/app.ts`.
-`src/integration.test.ts` is really a specification for endpoints that do not
-exist (`GET /users`, `POST /rooms`, `POST /rooms/dm`, `POST /auth/logout`, WS
-`typing` and `presence`), and it broke `npm test` because it matched the
-`src/*.test.ts` glob but expected a live server on port 3456. Resolved in
-v0.2.0: `rooms.ts` and `rooms.test.ts` are parked on the `feat/rooms-dm` branch
-and land properly in v0.6.0 with a real migration; the integration script moved
-to `test/integration/integration.spec.ts` behind its own npm script.
+`src/rooms.ts` defined a group/DM room model keyed by `room_id`/`user_id` foreign
+keys, which conflicted with the slug-and-username `room_members` table. It was
+parked on `feat/rooms-dm`, then reimplemented against current `main` in v0.6.0
+with a real migration. The old live-server integration spec moved to
+`test/integration/integration.spec.ts` and the v0.6.0 contract now runs in
+`src/v06-api.test.ts` as part of `npm test`.
 
 ### Server-side sessions must land with client-side token storage
 
@@ -260,34 +257,54 @@ runner or add `runs-on: self-hosted` until that issue is closed. Manual
   (publish the hermes-fe release first, let its bundle upload, then publish
   hermes-be), how to use the dispatch button, and how to force a rollback.
 
-## v0.6.0 - Rooms and users
+## v0.6.0 - Rooms and users (shipped)
 
-- Stand up the `s1` instance first and copy `p1`'s `hermes.db` immediately
-  before the production migration. Commands are in
-  [docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup). Do not treat
-  this as optional: the membership rewrite is not additive.
+- Documented `s1` rehearsal and a manual `p1` `hermes.db` copy before the
+  membership rewrite. Commands remain in
+  [docs/DEPLOY.md](DEPLOY.md#v060-s1-rehearsal-and-p1-backup).
 - Group rooms and DMs with membership by `user_id`, plus a real migration from
   the slug-and-username `room_members` to the FK model, including a backfill
-  for existing rows. (The parked `feat/rooms-dm` branch is too old to merge;
+  for existing rows. (The parked `feat/rooms-dm` branch was too old to merge;
   this was reimplemented against current `main`.)
-- New endpoints: `GET /users`, `GET /users/online`, `POST /rooms`,
+- Endpoints: `GET /users`, `GET /users/online`, `POST /rooms`,
   `POST /rooms/dm`, `POST /auth/logout`.
 - Web UI: create a room, start a DM, browse users.
-- Make `integration.spec.ts` pass for real against the implemented surface, and
-  fold it back into the default test run.
+- The v0.6.0 REST contract lives in `src/v06-api.test.ts` and runs as part of
+  `npm test`.
 
 ## v0.7.0 - Accounts and security
 
+Current release. Not started in code.
+
 - Replace the unsalted SHA256 in `hashPassword()` with argon2id, rehashing each
   user transparently on their next successful login.
-- Profile page: view and edit account details, change password with
-  current-password confirmation.
-- Avatar upload reusing the existing files infrastructure.
-- Rate limiting on the auth endpoints.
+- Profile page: username is **read-only** (login id; DM slugs are
+  `dm:alice:bob`). Change password with current-password confirmation. Avatar
+  upload reusing the existing files infrastructure; any logged-in user can
+  fetch another user's avatar.
+- Role **labels** only: `users.role` is `member` or `admin`. The first
+  registered user is `admin`. Shown on profile and `GET /users`. **No extra
+  powers** in this release.
+- Rate limiting on `/auth/register` and `/auth/login`.
 - Open question on password reset: with no email infrastructure there is no
   self-service reset. Options are an admin-issued one-time reset token, a
-  recovery code generated at registration, or adding SMTP. Worth deciding when we
-  get here; the profile page covers the common case in the meantime.
+  recovery code generated at registration, or adding SMTP
+  ([be#26](https://github.com/ahyibrahim/hermes-be/issues/26)). The profile page
+  covers the common case in the meantime. An admin-issued token depends on
+  fleshed-out roles ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)).
+
+## Backlog (unscheduled)
+
+Not a release. Pick a version when it is time; issues stay on the `backlog`
+label until then.
+
+- Flesh out member roles beyond the v0.7.0 label: what an admin may do, how
+  someone becomes admin after the first user, more roles if needed
+  ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)). Delete a group
+  room ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41)), delete a
+  message ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42)), and an
+  admin-issued password-reset token (option 1 on be#26) depend on this. Do not
+  pull those into v0.7.0.
 
 ## v0.8.0 - Voice chat
 
