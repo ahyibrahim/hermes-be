@@ -1,4 +1,5 @@
 import { getDb } from './database';
+import { isoTimestamp, toIsoTimestamp } from './colors';
 import {
   addRoomMember as addRoomMemberByNames,
   ensureRoom as ensureTypedRoom,
@@ -36,7 +37,10 @@ export function listMessages(room: string): MessageRecord[] {
     'SELECT id, room, sender, content, created_at, file_id FROM messages WHERE room = ? ORDER BY id ASC'
   );
 
-  return stmt.all(room) as MessageRecord[];
+  return (stmt.all(room) as MessageRecord[]).map((message) => ({
+    ...message,
+    created_at: toIsoTimestamp(message.created_at),
+  }));
 }
 
 export function createMessage(
@@ -45,18 +49,19 @@ export function createMessage(
   content: string,
   fileId: number | null = null
 ): MessageRecord {
+  const createdAt = isoTimestamp();
   const stmt = getDb().prepare(
-    'INSERT INTO messages (room, sender, content, file_id) VALUES (?, ?, ?, ?)'
+    'INSERT INTO messages (room, sender, content, file_id, created_at) VALUES (?, ?, ?, ?, ?)'
   );
 
-  const result = stmt.run(room, sender, content, fileId);
+  const result = stmt.run(room, sender, content, fileId, createdAt);
 
   return {
     id: Number(result.lastInsertRowid),
     room,
     sender,
     content,
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
     file_id: fileId,
   };
 }
@@ -89,10 +94,11 @@ export function createFileRecord(
   size: number,
   filePath: string
 ): FileRecord {
+  const createdAt = isoTimestamp();
   const stmt = getDb().prepare(
-    'INSERT INTO files (room, uploader, original_name, mime, size, path) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO files (room, uploader, original_name, mime, size, path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
-  const result = stmt.run(room, uploader, originalName, mime, size, filePath);
+  const result = stmt.run(room, uploader, originalName, mime, size, filePath, createdAt);
   return {
     id: Number(result.lastInsertRowid),
     room,
@@ -101,7 +107,7 @@ export function createFileRecord(
     mime,
     size,
     path: filePath,
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   };
 }
 

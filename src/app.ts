@@ -12,7 +12,6 @@ import {
   addRoomMember,
   createFileRecord,
   createMessage,
-  ensureRoom,
   getFileRecord,
   isRoomMember,
   listMessages,
@@ -24,10 +23,16 @@ import {
   getOrCreateDmRoom,
   getUserById,
   getUserByUsername,
+  leaveRoom,
   listRoomsForUser,
   listUsers,
+  markRoomRead,
+  setUserColor,
+  takenColors,
+  unreadCount,
 } from './rooms';
 import { changePassword, getProfile, loginUser, registerUser, setAvatarFileId } from './auth';
+import { isUserColor, USER_COLOR_PALETTE } from './colors';
 import { getDb } from './database';
 import { deleteOtherSessions, deleteSession, findSessionUser } from './sessions';
 import { buildInfo } from './build-info';
@@ -294,6 +299,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
   }
 
+  function broadcastToMembers(room: string, payload: unknown, exceptUser?: string): void {
+    for (const name of listRoomMembers(room)) {
+      if (exceptUser && name === exceptUser) {
+        continue;
+      }
+      sendToUser(name, payload);
+    }
+  }
+
   function sendToUser(username: string, payload: unknown): void {
     const sockets = userSockets.get(username);
     if (!sockets) {
@@ -436,7 +450,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     try {
       const user = await registerUser(body.username, body.password);
       addUserToGeneralRoom(user.id);
-      return { user: { id: user.id, username: user.username, role: user.role } };
+      return { user: { id: user.id, username: user.username, role: user.role, color: user.color } };
     } catch (error) {
       reply.code(409);
       return { error: (error as Error).message };
@@ -528,7 +542,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'authentication required' };
     }
 
-    const body = request.body as { current_password?: string; password?: string };
+    const body = request.body as { current_password?: string; password?: string; color?: string };
+    if (typeof body.color === 'string') {
+      if (!isUserColor(body.color)) {
+        reply.code(400);
+        return { error: 'color is not in the palette' };
+      }
+      const me = getUserByUsername(username);
+      if (!me) {
+        reply.code(401);
+        return { error: 'authentication required' };
+      }
+      const taken = takenColors();
+      if (taken.has(body.color) && me.color !== body.color) {
+        reply.code(409);
+        return { error: 'color is taken' };
+      }
+      setUserColor(me.id, body.color);
+      return getProfile(username);
+    }
+
     if (!body.current_password || !body.password || !body.password.trim()) {
       reply.code(400);
       return { error: 'current_password and password are required' };
@@ -637,6 +670,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return listRoomsForUser(username).map((room) => {
       const connected = connectedUsers(room.slug);
       const members = [...new Set([...connected, ...room.members])].sort((a, b) => a.localeCompare(b));
+      const me = getUserByUsername(username);
       return {
         id: room.id,
         slug: room.slug,
@@ -644,6 +678,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         type: room.type,
         created_at: room.created_at,
         members,
+        unread_count: me ? unreadCount(me.id, room.slug) : 0,
       };
     });
   });
@@ -708,6 +743,52 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
   });
 
+  fastify.post('/rooms/leave', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { room?: string };
+    const slug = normalizeRoomSlug(body.room);
+    if (!slug) {
+      reply.code(400);
+      return { error: 'room is required' };
+    }
+
+    const result = leaveRoom(slug, username);
+    if ('error' in result) {
+      reply.code(result.error === 'cannot leave general' ? 400 : 403);
+      return { error: result.error };
+    }
+
+    request.log.info({ event: 'room_leave', user: username, room: slug }, 'left room');
+    return { ok: true, room: slug };
+  });
+
+  fastify.post('/rooms/read', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const me = getUserByUsername(username);
+    const body = request.body as { room?: string };
+    const slug = normalizeRoomSlug(body.room);
+    if (!me || !slug) {
+      reply.code(400);
+      return { error: 'room is required' };
+    }
+
+    if (!isRoomMember(slug, username)) {
+      reply.code(403);
+      return { error: 'not a member of this room' };
+    }
+
+    markRoomRead(me.id, slug);
+    return { ok: true, room: slug, unread_count: 0 };
+  });
+
   fastify.get('/messages', async (request: FastifyRequest<{ Querystring: { room?: string } }>, reply) => {
     const slug = normalizeRoomSlug(request.query.room ?? 'general');
     if (!slug) {
@@ -723,6 +804,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     if (!isRoomMember(slug, username)) {
       reply.code(403);
       return { error: 'not a member of this room' };
+    }
+
+    const me = getUserByUsername(username);
+    if (me) {
+      markRoomRead(me.id, slug);
     }
 
     return listMessages(slug);
@@ -759,9 +845,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'authentication required' };
     }
 
-    addRoomMember(slug, username);
+    if (token) {
+      if (!isRoomMember(slug, username)) {
+        reply.code(403);
+        return { error: 'not a member of this room' };
+      }
+    } else {
+      addRoomMember(slug, username);
+    }
+
     const message = createMessage(slug, username, body.content.trim());
-    broadcastToRoom(slug, { type: 'message', message });
+    broadcastToMembers(slug, { type: 'message', message });
     return message;
   });
 
@@ -785,7 +879,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'room must be a slug, not a numeric id' };
     }
 
-    addRoomMember(slug, username);
+    if (!isRoomMember(slug, username)) {
+      reply.code(403);
+      data.file.resume();
+      return { error: 'not a member of this room' };
+    }
     const storedName = `${crypto.randomUUID()}`;
     const storedPath = path.join(filesDir, storedName);
     await pipeline(data.file, fs.createWriteStream(storedPath));
@@ -806,7 +904,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       storedPath
     );
     const message = createMessage(slug, username, file.original_name, file.id);
-    broadcastToRoom(slug, { type: 'message', message });
+    broadcastToMembers(slug, { type: 'message', message });
     request.log.info(
       {
         event: 'file_upload',
@@ -862,7 +960,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
 
     reply.header('Content-Type', file.mime);
-    reply.header('Content-Disposition', `attachment; filename="${file.original_name.replace(/"/g, '')}"`);
+    const image = file.mime.toLowerCase().startsWith('image/');
+    const safeName = file.original_name.replace(/"/g, '');
+    reply.header('Content-Disposition', image ? 'inline' : `attachment; filename="${safeName}"`);
     return reply.send(fs.createReadStream(file.path));
   });
 
@@ -995,8 +1095,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               return;
             }
 
-            ensureRoom(slug);
-            addRoomMember(slug, user);
+            if (!isRoomMember(slug, user)) {
+              sendJson(socket, errorFrame('not a member of this room'));
+              return;
+            }
+
+            const profile = getUserByUsername(user);
+            if (profile) {
+              markRoomRead(profile.id, slug);
+            }
 
             if (room && client) {
               leaveCurrentRoom();
@@ -1053,10 +1160,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               callMembers.set(slug, new Set());
             }
             const already = callMembers.get(slug)?.has(user) === true;
+            const starting = (callMembers.get(slug)?.size ?? 0) === 0;
             callMembers.get(slug)?.add(user);
 
             sendJson(socket, { type: 'call_peers', room: slug, users: callRoster(slug) });
             if (!already) {
+              if (starting) {
+                broadcastToMembers(slug, { type: 'call_started', room: slug, user }, user);
+              }
               broadcastCall(slug, { type: 'user_joined_call', room: slug, user }, user);
               request.log.info({ event: 'call_join', user, room: slug }, 'joined call');
             }

@@ -216,12 +216,22 @@ async function connectAuthed(token: string) {
 
     const staying = await registerAndLogin('staying');
     const leaving = await registerAndLogin('leaving');
+    const leavingProfile = (await (
+      await fetch(`${origin}/users`, { headers: { Authorization: `Bearer ${staying.token}` } })
+    ).json()) as Array<{ id: number; username: string }>;
+    const leavingId = leavingProfile.find((row) => row.username === 'leaving')?.id;
+    const presenceRoom = await fetch(`${origin}/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staying.token}` },
+      body: JSON.stringify({ name: 'presence', members: leavingId ? [leavingId] : [] }),
+    });
+    const presence = (await presenceRoom.json()) as { slug: string };
     const staySock = await connectAuthed(staying.token);
     const leaveSock = await connectAuthed(leaving.token);
-    staySock.socket.send(JSON.stringify({ type: 'join_room', room: 'presence' }));
+    staySock.socket.send(JSON.stringify({ type: 'join_room', room: presence.slug }));
     await staySock.readFrame();
     await staySock.readFrame();
-    leaveSock.socket.send(JSON.stringify({ type: 'join_room', room: 'presence' }));
+    leaveSock.socket.send(JSON.stringify({ type: 'join_room', room: presence.slug }));
     await leaveSock.readFrame();
     await leaveSock.readFrame();
     const joinedPresence = await staySock.readFrame();

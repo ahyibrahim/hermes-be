@@ -79,6 +79,17 @@ test('file upload, download, and live room broadcast', async () => {
   try {
     const alice = await registerAndLogin('filealice');
     const bob = await registerAndLogin('filebob');
+    const users = (await (
+      await fetch(`${origin}/users`, { headers: { Authorization: `Bearer ${alice.token}` } })
+    ).json()) as Array<{ id: number; username: string }>;
+    const bobId = users.find((row) => row.username === 'filebob')?.id;
+    const created = await fetch(`${origin}/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${alice.token}` },
+      body: JSON.stringify({ name: 'File Share', members: bobId ? [bobId] : [] }),
+    });
+    assert.equal(created.status, 200);
+    const share = (await created.json()) as { slug: string };
     const a = connect(alice.token);
     const b = connect(bob.token);
     await a.open;
@@ -86,17 +97,17 @@ test('file upload, download, and live room broadcast', async () => {
     await a.readFrame();
     await b.readFrame();
 
-    a.socket.send(JSON.stringify({ type: 'join_room', room: 'fileshare' }));
+    a.socket.send(JSON.stringify({ type: 'join_room', room: share.slug }));
     await a.readFrame();
     await a.readFrame();
-    b.socket.send(JSON.stringify({ type: 'join_room', room: 'fileshare' }));
+    b.socket.send(JSON.stringify({ type: 'join_room', room: share.slug }));
     await b.readFrame();
     await b.readFrame();
     await a.readFrame();
 
     const payload = Buffer.from('hermes-file-bytes');
     const form = new FormData();
-    form.append('room', 'fileshare');
+    form.append('room', share.slug);
     form.append('file', new Blob([payload], { type: 'text/plain' }), 'note.txt');
 
     const uploaded = await fetch(`${origin}/files`, {

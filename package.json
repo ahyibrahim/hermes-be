@@ -1,13 +1,13 @@
 {
   "name": "hermes-be",
-  "version": "0.8.0",
+    "version": "0.9.0",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "LOG_LEVEL=silent tsx --test src/*.test.ts",
-    "test:integration": "LOG_LEVEL=silent tsx --test src/v06-api.test.ts src/v07-api.test.ts"
+    "test:integration": "LOG_LEVEL=silent tsx --test src/v06-api.test.ts src/v07-api.test.ts src/v09-api.test.ts"
   },
   "//test": "npm test runs only self-contained node:test files under src/. It boots what it needs and uses temporary databases. LOG_LEVEL=silent keeps Pino off so the TAP output stays readable; logger.test.ts overrides the level when it captures logs.",
   "//test:integration": "Runs src/v06-api.test.ts (also part of npm test). The old live-server script is a historical note in test/integration/integration.spec.ts.",

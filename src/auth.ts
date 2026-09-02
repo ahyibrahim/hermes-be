@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import argon2 from 'argon2';
 import { getDb } from './database';
 import { createSession } from './sessions';
+import { USER_COLOR_PALETTE, type UserColor } from './colors';
+import { takenColors } from './rooms';
 
 export type UserRole = 'member' | 'admin';
 
@@ -10,6 +12,7 @@ export interface AuthUser {
   username: string;
   role: UserRole;
   avatar_file_id: number | null;
+  color: string | null;
 }
 
 export interface AuthSession {
@@ -47,6 +50,11 @@ async function passwordMatches(stored: string, password: string): Promise<boolea
   return stored === sha256(password);
 }
 
+function nextColor(): UserColor {
+  const taken = takenColors();
+  return USER_COLOR_PALETTE.find((slot) => !taken.has(slot)) ?? USER_COLOR_PALETTE[taken.size % USER_COLOR_PALETTE.length];
+}
+
 function nextRole(): UserRole {
   const row = getDb().prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
   return row.n === 0 ? 'admin' : 'member';
@@ -59,15 +67,17 @@ export async function registerUser(username: string, password: string): Promise<
   }
 
   const role = nextRole();
+  const color = nextColor();
   const hashed = await hashPassword(password);
-  const stmt = getDb().prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)');
-  const result = stmt.run(normalizedUsername, hashed, role);
+  const stmt = getDb().prepare('INSERT INTO users (username, password, role, color) VALUES (?, ?, ?, ?)');
+  const result = stmt.run(normalizedUsername, hashed, role, color);
 
   return {
     id: Number(result.lastInsertRowid),
     username: normalizedUsername,
     role,
     avatar_file_id: null,
+    color,
   };
 }
 
@@ -98,7 +108,7 @@ export async function loginUser(username: string, password: string): Promise<Aut
 
 export function getProfile(username: string): AuthUser | undefined {
   return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id FROM users WHERE username = ?')
+    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE username = ?')
     .get(username) as AuthUser | undefined;
 }
 

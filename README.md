@@ -96,7 +96,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
@@ -216,12 +216,12 @@ sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
 journalctl -u hermes-be@p1 -f
 ```
 
-`setup-host.sh` must run before the first `deploy.sh` or the deploy fails with a missing env file. `deploy.sh` checks out the **GitHub tag** (not this working tree), builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `http://ying-1:PORT/`. Wiring this into GitHub Actions is backlog, blocked on a private hermes-be; pushing a tag alone still does not deploy.
+`setup-host.sh` must run before the first `deploy.sh` or the deploy fails with a missing env file. `deploy.sh` checks out the **GitHub tag** (not this working tree), builds, unpacks the web bundle into `HERMES_WEB_DIR` when that is set, restarts the unit and polls `/health` until it reports the version and commit it just deployed. Tailscale clients then open `https://ying-1.tail18942a.ts.net/` (`tailscale serve --bg 3000`). `http://ying-1:3000` is not a secure context, so voice will not work there. Wiring this into GitHub Actions is backlog, blocked on a private hermes-be; pushing a tag alone still does not deploy.
 
 ## Roadmap
 
-[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.8.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
+[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.10.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
 
 ## Out of scope for now
 
-E2E encryption and clustered processes. Voice chat is planned for v0.8.0, browser only.
+E2E encryption and clustered processes. CLI voice is out of scope.
