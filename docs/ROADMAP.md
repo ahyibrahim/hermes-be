@@ -27,8 +27,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.6.0 - Rooms and users (shipped on `p1`; `s1` rehearsal skipped)
 - [x] v0.7.0 - Accounts and security (live on `p1`)
 - [x] v0.8.0 - Voice chat (live on `p1`; HTTPS via Tailscale Serve)
-- [ ] v0.9.0 - Daily-driver UX (current)
-- [ ] v0.10.0 - Roles and moderation
+- [x] v0.9.0 - Daily-driver UX (live on `p1`)
+- [ ] v0.10.0 - Polish and recovery (current)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -113,8 +113,8 @@ graph LR
   v04 --> v07[v0.7.0 Accounts and security — shipped]
   v06 --> v08[v0.8.0 Voice chat — shipped]
   v07 --> v08
-  v08 --> v09[v0.9.0 Daily-driver UX]
-  v09 --> v10[v0.10.0 Roles and moderation]
+  v08 --> v09[v0.9.0 Daily-driver UX — shipped]
+  v09 --> v10[v0.10.0 Polish and recovery]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -129,8 +129,10 @@ backlog (blocked on a private hermes-be) rather than a gate for rooms or
 accounts. Rooms/DMs and accounts are independent of each other and of
 automation — they still want a UI, which v0.4.0 shipped. Voice chat needed
 both a UI and the hardened auth. Daily-driver UX follows voice because the
-shell is now the product. Roles and destructive ops wait until that shell
-exists, and until `users.role` is more than a label.
+shell is now the product. v0.10.0 is a second pass on that shell (recovery,
+hide-not-leave DMs, unsend, leftover QoL) rather than roles. Promote/demote,
+delete-group, and kick stay backlog until we want `users.role` to be more
+than a label.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -326,10 +328,12 @@ coturn not needed on the tailnet),
       so `getUserMedia` works off localhost
 - Browser only. CLI voice is explicitly out of scope.
 
-## v0.9.0 - Daily-driver UX
+## v0.9.0 - Daily-driver UX (shipped)
 
-Current release. Web-first. The chat shell people actually sit in: layout,
-people, unread, transcript polish. Not a new product surface.
+Live on `p1` (`0.9.0` @ `f361eba`). Web-first. The chat shell people actually
+sit in: layout, people, unread, transcript polish. Not a new product surface.
+Tagged in both repos ([be#55](https://github.com/ahyibrahim/hermes-be/pull/55),
+[fe#48](https://github.com/ahyibrahim/hermes-fe/pull/48)).
 
 ### Backend
 
@@ -379,48 +383,61 @@ people, unread, transcript polish. Not a new product surface.
 CLI only changes where the API forces it (ISO times, `color`, leave). No CLI
 voice, crop, or notifications.
 
-## v0.10.0 - Roles and moderation
+## v0.10.0 - Polish and recovery
 
-`users.role` stops being a label.
+Current release. Web-first. Finish the daily-driver shell and the locked-out
+case. Keep it solidly moderate: contracts first, freeze a login mark early,
+then one transcript/composer pass. Markdown is inline `code` plus emphasis
+only — no lists or headings. Unsend is **sender only**; admin-delete waits
+with roles. Close-DM is hide-on-membership, not a second leave. Reset is a
+one-time hashed token (short TTL, shown once); redeeming it revokes other
+sessions. Drafts and the mark stay client-side. CLI only where the API
+forces it (reset redeem is a login-screen path; slash-command unsend can
+wait).
 
-**Policy:** two roles (`member` / `admin`). Multiple admins allowed. An admin
-can promote or demote anyone except the last remaining admin. Leave (v0.9)
-stays “drop myself.” Delete group is “gone for everyone.”
+### Contracts (before restyling bubbles)
 
-- Flesh out admin powers and promote/demote
-  ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43))
-- Delete a group: creator or admin; hard-delete room + memberships + messages
-  + that room’s files; confirm in UI; broadcast `room_deleted`. Additive
-  `rooms.creator_id`
-  ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
-  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
-- Delete a message: sender or admin; tombstone (`deleted_at`, clear content /
-  `file_id`); broadcast. No edit, no time window
+- Closed DM is hide, not leave. A new message from the peer unhides the row,
+  unread, and notifies. Groups still hard-leave
+  ([be#54](https://github.com/ahyibrahim/hermes-be/issues/54),
+  [fe#47](https://github.com/ahyibrahim/hermes-fe/issues/47))
+- Unsend a message: sender only; tombstone (`deleted_at`, clear content /
+  `file_id`); broadcast. No edit, no time window, no admin override
   ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42),
   [fe#28](https://github.com/ahyibrahim/hermes-fe/issues/28))
-- Admin-issued one-time password reset token
-  ([be#26](https://github.com/ahyibrahim/hermes-be/issues/26))
+- Admin-issued one-time password reset token. First-user-as-admin (v0.7
+  label) may issue; no promote/demote in this release
+  ([be#26](https://github.com/ahyibrahim/hermes-be/issues/26),
+  [fe#52](https://github.com/ahyibrahim/hermes-fe/issues/52))
+- Keep `users.color` unique and fan out color changes
+  ([be#53](https://github.com/ahyibrahim/hermes-be/issues/53),
+  [fe#45](https://github.com/ahyibrahim/hermes-fe/issues/45))
 
-Kick-from-group can wait unless it falls out of the same membership code.
+### Shell
+
+- Login mark. Freeze a mark early and put it on the login screen
+  ([fe#22](https://github.com/ahyibrahim/hermes-fe/issues/22))
+- Inline `code` and emphasis only
+  ([fe#43](https://github.com/ahyibrahim/hermes-fe/issues/43))
+- Date separators and copy on fenced code blocks
+  ([fe#49](https://github.com/ahyibrahim/hermes-fe/issues/49))
+- Auto-grow composer and per-room drafts (localStorage)
+  ([fe#50](https://github.com/ahyibrahim/hermes-fe/issues/50))
+- Last-message preview in the room and DM rails
+  ([be#56](https://github.com/ahyibrahim/hermes-be/issues/56),
+  [fe#51](https://github.com/ahyibrahim/hermes-fe/issues/51))
 
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
-- [fe#22](https://github.com/ahyibrahim/hermes-fe/issues/22) login branding
-  (needs a mark)
-- [fe#43](https://github.com/ahyibrahim/hermes-fe/issues/43) inline `code` and
-  a small markdown subset (lists, emphasis, maybe headings). v0.9 only does
-  fenced blocks + URL linkify
-- Persist username colors across users and keep slots unique in the picker
-  ([fe#45](https://github.com/ahyibrahim/hermes-fe/issues/45),
-  [be#53](https://github.com/ahyibrahim/hermes-be/issues/53))
-- Closed DMs never notify or show unread when the other person writes
-  ([fe#47](https://github.com/ahyibrahim/hermes-fe/issues/47),
-  [be#54](https://github.com/ahyibrahim/hermes-be/issues/54))
-- Per-room composer drafts, auto-grow composer, date separators,
-  copy-on-code-block, last-message preview in the rail
+- Roles and moderation: promote/demote (multiple admins, cannot demote the
+  last admin); delete a group (creator or admin; hard-delete; confirm UI);
+  kick; admin-delete of others' messages. Umbrella
+  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
+  ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
