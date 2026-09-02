@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.8.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.10.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -26,7 +26,9 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.4.0 - Web UI MVP
 - [x] v0.6.0 - Rooms and users (shipped on `p1`; `s1` rehearsal skipped)
 - [x] v0.7.0 - Accounts and security (live on `p1`)
-- [ ] v0.8.0 - Voice chat (next; not started)
+- [x] v0.8.0 - Voice chat (live on `p1`; HTTPS via Tailscale Serve)
+- [ ] v0.9.0 - Daily-driver UX (current)
+- [ ] v0.10.0 - Roles and moderation
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -109,8 +111,10 @@ graph LR
   v03 --> v04[v0.4.0 Web UI MVP — shipped]
   v04 --> v06[v0.6.0 Rooms and users — shipped]
   v04 --> v07[v0.7.0 Accounts and security — shipped]
-  v06 --> v08[v0.8.0 Voice chat]
+  v06 --> v08[v0.8.0 Voice chat — shipped]
   v07 --> v08
+  v08 --> v09[v0.9.0 Daily-driver UX]
+  v09 --> v10[v0.10.0 Roles and moderation]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -123,8 +127,10 @@ once already knowing it must ship both a Node service and a static bundle; the
 underlying service and script landed in v0.3.0, and the CI wiring is now
 backlog (blocked on a private hermes-be) rather than a gate for rooms or
 accounts. Rooms/DMs and accounts are independent of each other and of
-automation — they still want a UI, which v0.4.0 shipped. Voice chat is last
-because it needs both a UI and the hardened auth.
+automation — they still want a UI, which v0.4.0 shipped. Voice chat needed
+both a UI and the hardened auth. Daily-driver UX follows voice because the
+shell is now the product. Roles and destructive ops wait until that shell
+exists, and until `users.role` is more than a label.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -294,48 +300,128 @@ Live on `p1` (`0.7.0` @ `d853135`). Additive schema (`users.role`,
 [be#25](https://github.com/ahyibrahim/hermes-be/issues/25),
 [fe#18](https://github.com/ahyibrahim/hermes-fe/issues/18).
 [be#26](https://github.com/ahyibrahim/hermes-be/issues/26) (password reset)
-stays open; it did not block this release.
+moved to v0.10.0; it did not block this release.
 
 - [x] Replace unsalted SHA256 with argon2id; rehash on next successful login
 - [x] Profile page: read-only username, password change, avatar upload
 - [x] Role labels (`member` / `admin`); first user is admin; no extra powers
 - [x] Rate limiting on `/auth/register` and `/auth/login`
 
-Password reset options remain an open question: admin-issued one-time token,
-recovery code at registration, or SMTP
-([be#26](https://github.com/ahyibrahim/hermes-be/issues/26)). An admin-issued
-token depends on fleshed-out roles
-([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)).
+Password reset is decided for v0.10.0: admin-issued one-time token (option 1).
+No SMTP. Recovery codes stay unscheduled.
+
+## v0.8.0 - Voice chat (shipped)
+
+Tagged in both repos. Signaling and the web call UI are on `main`. Closed:
+[be#27](https://github.com/ahyibrahim/hermes-be/issues/27),
+[fe#19](https://github.com/ahyibrahim/hermes-fe/issues/19),
+[be#28](https://github.com/ahyibrahim/hermes-be/issues/28) (STUN shipped;
+coturn not needed on the tailnet),
+[be#48](https://github.com/ahyibrahim/hermes-be/issues/48) (Tailscale HTTPS).
+
+- [x] WebRTC signaling over `/ws` (`join_call`, SDP, ICE); media is peer-to-peer
+- [x] Call UI: join, leave, mute, participant list, speaking indicator
+- [x] `GET /ice` serves STUN (`HERMES_ICE_SERVERS`); TURN not deployed
+- [x] `tailscale serve` terminates HTTPS at `https://ying-1.tail18942a.ts.net`
+      so `getUserMedia` works off localhost
+- Browser only. CLI voice is explicitly out of scope.
+
+## v0.9.0 - Daily-driver UX
+
+Current release. Web-first. The chat shell people actually sit in: layout,
+people, unread, transcript polish. Not a new product surface.
+
+### Backend
+
+- ISO-8601 `Z` timestamps in SQLite and JSON
+  ([be#37](https://github.com/ahyibrahim/hermes-be/issues/37),
+  [be#49](https://github.com/ahyibrahim/hermes-be/issues/49))
+- Leave a room: `DELETE /rooms/:slug/members/me`. Never messages, never
+  `general`. Re-open a DM with existing `POST /rooms/dm`
+  ([be#40](https://github.com/ahyibrahim/hermes-be/issues/40))
+- `room_reads` + `unread_count` on `GET /rooms`
+  ([be#49](https://github.com/ahyibrahim/hermes-be/issues/49))
+- Fan `{ type: 'message' }` to every connected **member**, not only
+  `join_room` sockets ([be#50](https://github.com/ahyibrahim/hermes-be/issues/50))
+- `users.color` palette + `PATCH /users/me`
+  ([be#51](https://github.com/ahyibrahim/hermes-be/issues/51),
+  [fe#36](https://github.com/ahyibrahim/hermes-fe/issues/36))
+- `{ type: 'call_started', room, user }` to members when a call goes from
+  empty to one peer ([be#52](https://github.com/ahyibrahim/hermes-be/issues/52))
+
+### Web
+
+- Rooms vs Direct messages
+  ([fe#25](https://github.com/ahyibrahim/hermes-fe/issues/25)); collapsible
+  rails ([fe#35](https://github.com/ahyibrahim/hermes-fe/issues/35))
+- Close a DM ([fe#26](https://github.com/ahyibrahim/hermes-fe/issues/26));
+  leave a group from the header ([fe#37](https://github.com/ahyibrahim/hermes-fe/issues/37));
+  DM row layout so the close control does not swallow the name
+  ([fe#46](https://github.com/ahyibrahim/hermes-fe/issues/46))
+- In-house Avatar / chip / hover-card (ADR 0001)
+  ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31),
+  [fe#29](https://github.com/ahyibrahim/hermes-fe/issues/29),
+  [fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30));
+  crop-before-upload ([fe#33](https://github.com/ahyibrahim/hermes-fe/issues/33))
+- Username colors ([fe#36](https://github.com/ahyibrahim/hermes-fe/issues/36))
+- Unread numbers, tab title, people-rail sort/role, whoami avatar, desktop
+  notifications, call toast
+  ([fe#42](https://github.com/ahyibrahim/hermes-fe/issues/42))
+- Transcript: group consecutive messages, fenced code, linkify, `@username`
+  ([fe#38](https://github.com/ahyibrahim/hermes-fe/issues/38));
+  image previews ([fe#39](https://github.com/ahyibrahim/hermes-fe/issues/39));
+  jump to latest ([fe#41](https://github.com/ahyibrahim/hermes-fe/issues/41));
+  color bubbles around consecutive-sender runs
+  ([fe#44](https://github.com/ahyibrahim/hermes-fe/issues/44))
+- Composer: pending-file chip, drag-and-drop, paste image
+  ([fe#40](https://github.com/ahyibrahim/hermes-fe/issues/40))
+
+CLI only changes where the API forces it (ISO times, `color`, leave). No CLI
+voice, crop, or notifications.
+
+## v0.10.0 - Roles and moderation
+
+`users.role` stops being a label.
+
+**Policy:** two roles (`member` / `admin`). Multiple admins allowed. An admin
+can promote or demote anyone except the last remaining admin. Leave (v0.9)
+stays “drop myself.” Delete group is “gone for everyone.”
+
+- Flesh out admin powers and promote/demote
+  ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43))
+- Delete a group: creator or admin; hard-delete room + memberships + messages
+  + that room’s files; confirm in UI; broadcast `room_deleted`. Additive
+  `rooms.creator_id`
+  ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
+- Delete a message: sender or admin; tombstone (`deleted_at`, clear content /
+  `file_id`); broadcast. No edit, no time window
+  ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42),
+  [fe#28](https://github.com/ahyibrahim/hermes-fe/issues/28))
+- Admin-issued one-time password reset token
+  ([be#26](https://github.com/ahyibrahim/hermes-be/issues/26))
+
+Kick-from-group can wait unless it falls out of the same membership code.
 
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
-- [ ] Avatars next to usernames in lists
-      ([fe#29](https://github.com/ahyibrahim/hermes-fe/issues/29)), a hover card
-      with avatar, role and profile summary
-      ([fe#30](https://github.com/ahyibrahim/hermes-fe/issues/30)), a small
-      in-house web component set to share that UI (no third-party library; ADR 0001)
-      ([fe#31](https://github.com/ahyibrahim/hermes-fe/issues/31)), and centering /
-      cropping a photo before it is set as the avatar
-      ([fe#33](https://github.com/ahyibrahim/hermes-fe/issues/33))
-- [ ] Flesh out member roles beyond the v0.7.0 label: what an admin may do, how
-      someone becomes admin after the first user, more roles if needed
-      ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)). Delete a group
-      room ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41)), delete a
-      message ([be#42](https://github.com/ahyibrahim/hermes-be/issues/42)), and an
-      admin-issued password-reset token (option 1 on be#26) depend on this.
-
-## v0.8.0 - Voice chat
-
-- WebRTC signaling over the existing `/ws` channel with new message types
-  (`call_offer`, `call_answer`, `ice_candidate`, `call_end`), reusing handshake
-  auth.
-- Peer-to-peer mesh for small groups. Media is DTLS-SRTP encrypted between peers
-  and never traverses the server, which gives genuine end-to-end encryption. An
-  SFU would break that property, so mesh is the right call at this group size.
-- Call UI: join, leave, mute, participant list, speaking indicator.
-- Direct connections usually work on a tailnet; add STUN and only stand up
-  coturn if testing shows it is needed.
-- Browser only. CLI voice is explicitly out of scope.
+- [fe#22](https://github.com/ahyibrahim/hermes-fe/issues/22) login branding
+  (needs a mark)
+- [fe#43](https://github.com/ahyibrahim/hermes-fe/issues/43) inline `code` and
+  a small markdown subset (lists, emphasis, maybe headings). v0.9 only does
+  fenced blocks + URL linkify
+- Persist username colors across users and keep slots unique in the picker
+  ([fe#45](https://github.com/ahyibrahim/hermes-fe/issues/45),
+  [be#53](https://github.com/ahyibrahim/hermes-be/issues/53))
+- Closed DMs never notify or show unread when the other person writes
+  ([fe#47](https://github.com/ahyibrahim/hermes-fe/issues/47),
+  [be#54](https://github.com/ahyibrahim/hermes-be/issues/54))
+- Per-room composer drafts, auto-grow composer, date separators,
+  copy-on-code-block, last-message preview in the rail
+- File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
+- Deploy automation, blocked on a private hermes-be
+  ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
+- Search, read receipts, typing indicators, reactions

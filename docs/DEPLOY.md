@@ -117,6 +117,29 @@ refuses to overwrite an existing database.
 by `migrateSchema()` on the first start of the service. Leave `HERMES_SEED_FROM`
 unset unless you know there is a database worth carrying over.
 
+## Tailscale HTTPS (p1)
+
+`getUserMedia` needs a secure context. Terminate TLS with Tailscale Serve in
+front of the existing HTTP process — not Caddy, not certbot, not an `https`
+listen in Node.
+
+```sh
+tailscale serve --bg 3000
+```
+
+That is `https://ying-1.tail18942a.ts.net` → `http://127.0.0.1:3000`. `wss` is
+same-origin. Confirm with `tailscale serve status` and
+`curl -s https://ying-1.tail18942a.ts.net/health`.
+
+`localStorage` is per-origin: clients that used `http://ying-1:3000` must log
+in again. Point the CLI at
+`HERMES_BASE_URL=https://ying-1.tail18942a.ts.net`.
+
+**NAT / TURN.** Direct connections work on the tailnet. `GET /ice` serves
+Google STUN by default (`HERMES_ICE_SERVERS`). coturn is not deployed. If a
+future off-tailnet NAT test fails, add a TURN URL to `HERMES_ICE_SERVERS` — do
+not stand up coturn until that test says so.
+
 ## Deploy runbook
 
 1. **Merge the release PRs, then tag both repos.** Deploys are always by tag,
@@ -186,10 +209,31 @@ unset unless you know there is a database worth carrying over.
    {"status":"ok","service":"hermes-be","message":"Backend is running","version":"0.4.0","commit":"<sha>"}
    ```
 
-   Clients on the tailnet open **`http://ying-1:PORT/`** (port from the instance
-   env file, `3000` for `p1`). REST, `/ws`, and the SPA are the same origin, so
-   the bundle can derive its API base URL from `window.location.origin` and
-   there is no CORS.
+   Clients on the tailnet open **`https://ying-1.tail18942a.ts.net/`** for `p1`.
+   Tailscale Serve terminates TLS in front of the existing HTTP process
+   (`tailscale serve --bg 3000` → `http://127.0.0.1:3000`). REST, `/ws` (`wss`),
+   and the SPA are the same origin, so the bundle can derive its API base URL
+   from `window.location.origin` and there is no CORS.
+
+   `getUserMedia` needs a secure context. `http://127.0.0.1:3000` works for
+   local smoke tests. `http://ying-1:3000` does **not** (`navigator.mediaDevices`
+   is undefined), so a second tailnet device cannot join a voice call without
+   HTTPS. Do not add nginx/Caddy or an `https` listen in Node unless Serve is
+   not enough.
+
+   `localStorage` is per-origin: everyone who used `http://ying-1:3000` signs
+   in again on the MagicDNS URL. Point the CLI at the same origin:
+
+   ```sh
+   HERMES_BASE_URL=https://ying-1.tail18942a.ts.net hermes
+   ```
+
+   Confirm Serve is up:
+
+   ```sh
+   tailscale serve status
+   curl -s https://ying-1.tail18942a.ts.net/health
+   ```
 
 ### Migrations
 

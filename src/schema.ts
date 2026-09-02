@@ -111,6 +111,90 @@ function backfillEmpty(
   );
 }
 
+function backfillIsoTimestamps(db: SqliteDb, log: SchemaLogger, table: string): void {
+  if (!columnNames(db, table).has('created_at')) {
+    note(log, false, 'backfill', { table, column: 'created_at' }, `${table}.created_at absent`);
+    return;
+  }
+
+  const rows = db
+    .prepare(`SELECT rowid AS id, created_at FROM ${table}`)
+    .all() as Array<{ id: number; created_at: string | null }>;
+  let changes = 0;
+  const update = db.prepare(`UPDATE ${table} SET created_at = ? WHERE rowid = ?`);
+  for (const row of rows) {
+    const next = toIso(row.created_at);
+    if (next !== row.created_at) {
+      update.run(next, row.id);
+      changes += 1;
+    }
+  }
+  note(
+    log,
+    changes > 0,
+    'backfill',
+    { table, column: 'created_at', changes },
+    changes > 0
+      ? `normalized ${changes} ${table}.created_at value(s) to ISO-8601`
+      : `no ${table}.created_at values to normalize`
+  );
+}
+
+function toIso(value: string | null): string {
+  if (!value) {
+    return new Date().toISOString();
+  }
+  if (value.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(value)) {
+    const parsed = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+    return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+  }
+  const naive = value.includes('T') ? value : value.replace(' ', 'T');
+  const parsed = new Date(`${naive}Z`);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+const COLOR_PALETTE = [
+  'ember',
+  'moss',
+  'lake',
+  'plum',
+  'rust',
+  'teal',
+  'gold',
+  'indigo',
+  'rose',
+  'slate',
+];
+
+function backfillUserColors(db: SqliteDb, log: SchemaLogger): void {
+  const taken = new Set(
+    (
+      db
+        .prepare("SELECT color FROM users WHERE color IS NOT NULL AND color != ''")
+        .all() as Array<{ color: string }>
+    ).map((row) => row.color)
+  );
+  const missing = db
+    .prepare("SELECT id FROM users WHERE color IS NULL OR color = '' ORDER BY id ASC")
+    .all() as Array<{ id: number }>;
+  const update = db.prepare('UPDATE users SET color = ? WHERE id = ?');
+  let changes = 0;
+  for (const row of missing) {
+    const color =
+      COLOR_PALETTE.find((slot) => !taken.has(slot)) ?? COLOR_PALETTE[changes % COLOR_PALETTE.length];
+    taken.add(color);
+    update.run(color, row.id);
+    changes += 1;
+  }
+  note(
+    log,
+    changes > 0,
+    'backfill',
+    { table: 'users', column: 'color', changes },
+    changes > 0 ? `assigned color to ${changes} user(s)` : 'every user already has a color'
+  );
+}
+
 function backfillFirstAdmin(db: SqliteDb, log: SchemaLogger): void {
   const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get() as {
     n: number;
@@ -242,6 +326,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
       password TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
       avatar_file_id INTEGER,
+      color TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`
   );
@@ -315,7 +400,9 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   backfillEmpty(db, log, 'users', 'created_at');
   addColumnIfMissing(db, log, 'users', 'role', "TEXT NOT NULL DEFAULT 'member'");
   addColumnIfMissing(db, log, 'users', 'avatar_file_id', 'INTEGER');
+  addColumnIfMissing(db, log, 'users', 'color', 'TEXT');
   backfillFirstAdmin(db, log);
+  backfillUserColors(db, log);
 
   addColumnIfMissing(db, log, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
   addColumnIfMissing(db, log, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");
@@ -373,4 +460,21 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
 
   migrateRoomMembers(db, log);
   backfillGeneralMembership(db, log);
+
+  ensureTable(
+    db,
+    log,
+    'room_reads',
+    `CREATE TABLE IF NOT EXISTS room_reads (
+      user_id INTEGER NOT NULL,
+      room TEXT NOT NULL,
+      last_message_id INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, room)
+    )`
+  );
+
+  backfillIsoTimestamps(db, log, 'messages');
+  backfillIsoTimestamps(db, log, 'files');
+  backfillIsoTimestamps(db, log, 'rooms');
+  backfillIsoTimestamps(db, log, 'users');
 }

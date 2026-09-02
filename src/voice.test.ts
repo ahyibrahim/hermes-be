@@ -134,6 +134,11 @@ test('voice signaling: ICE auth, offer reaches only the target, disconnect clear
     const alicePeers = await a.readFrame();
     assert.equal(alicePeers.type, 'call_peers');
     assert.deepEqual(alicePeers.users, ['alice']);
+    const bobStarted = await b.readFrame();
+    const carolStarted = await c.readFrame();
+    assert.equal(bobStarted.type, 'call_started');
+    assert.equal(carolStarted.type, 'call_started');
+    assert.equal(bobStarted.user, 'alice');
 
     b.socket.send(JSON.stringify({ type: 'join_call', room: 'general' }));
     const bobPeers = await b.readFrame();

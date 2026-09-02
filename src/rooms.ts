@@ -17,6 +17,7 @@ export interface PublicUser {
   username: string;
   role: 'member' | 'admin';
   avatar_file_id: number | null;
+  color: string | null;
 }
 
 function membersOf(roomId: number): string[] {
@@ -41,19 +42,19 @@ function toSummary(room: RoomRecord): RoomSummary {
 
 export function getUserByUsername(username: string): PublicUser | undefined {
   return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id FROM users WHERE username = ?')
+    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE username = ?')
     .get(username) as PublicUser | undefined;
 }
 
 export function getUserById(id: number): PublicUser | undefined {
   return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id FROM users WHERE id = ?')
+    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE id = ?')
     .get(id) as PublicUser | undefined;
 }
 
 export function listUsers(): PublicUser[] {
   return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id FROM users ORDER BY username ASC')
+    .prepare('SELECT id, username, role, avatar_file_id, color FROM users ORDER BY username ASC')
     .all() as PublicUser[];
 }
 
@@ -183,6 +184,8 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
   const slug = `dm:${members[0].username}:${members[1].username}`;
   const existing = getRoomBySlug(slug);
   if (existing) {
+    addMemberIds(existing.id, userId);
+    addMemberIds(existing.id, otherUserId);
     return toSummary(existing);
   }
 
@@ -202,4 +205,61 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
     type: 'dm',
     created_at: new Date().toISOString(),
   });
+}
+
+export function leaveRoom(slug: string, username: string): { ok: true } | { error: string } {
+  if (slug === 'general') {
+    return { error: 'cannot leave general' };
+  }
+  if (!isRoomMember(slug, username)) {
+    return { error: 'not a member of this room' };
+  }
+  const room = getRoomBySlug(slug);
+  const user = getUserByUsername(username);
+  if (!room || !user) {
+    return { error: 'not a member of this room' };
+  }
+  getDb()
+    .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
+    .run(room.id, user.id);
+  return { ok: true };
+}
+
+export function unreadCount(userId: number, slug: string): number {
+  const read = getDb()
+    .prepare('SELECT last_message_id FROM room_reads WHERE user_id = ? AND room = ?')
+    .get(userId, slug) as { last_message_id: number } | undefined;
+  const watermark = read?.last_message_id ?? 0;
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS n FROM messages WHERE room = ? AND id > ?')
+    .get(slug, watermark) as { n: number };
+  return row.n;
+}
+
+export function markRoomRead(userId: number, slug: string): void {
+  const row = getDb()
+    .prepare('SELECT MAX(id) AS max_id FROM messages WHERE room = ?')
+    .get(slug) as { max_id: number | null };
+  const lastId = row.max_id ?? 0;
+  getDb()
+    .prepare(
+      `INSERT INTO room_reads (user_id, room, last_message_id)
+       VALUES (?, ?, ?)
+       ON CONFLICT(user_id, room) DO UPDATE SET last_message_id = excluded.last_message_id`
+    )
+    .run(userId, slug, lastId);
+}
+
+export function takenColors(): Set<string> {
+  return new Set(
+    (
+      getDb()
+        .prepare("SELECT color FROM users WHERE color IS NOT NULL AND color != ''")
+        .all() as Array<{ color: string }>
+    ).map((row) => row.color)
+  );
+}
+
+export function setUserColor(userId: number, color: string): void {
+  getDb().prepare('UPDATE users SET color = ? WHERE id = ?').run(color, userId);
 }
