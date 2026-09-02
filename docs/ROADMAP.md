@@ -386,9 +386,10 @@ voice, crop, or notifications.
 ## v0.10.0 - Polish and recovery
 
 Current release. Web-first. Finish the daily-driver shell and the locked-out
-case. Keep it solidly moderate: contracts first, freeze a login mark early,
-then one transcript/composer pass. Markdown is inline `code` plus emphasis
-only — no lists or headings. Unsend is **sender only**; admin-delete waits
+case. Keep it solidly moderate: contracts first, freeze a Hermes mark early
+(login + favicon), then one transcript/composer pass. Markdown is inline
+`code` plus emphasis only — no lists or headings. Unsend is **sender only**;
+admin-delete waits
 with roles. Close-DM is hide-on-membership, not a second leave. Reset is a
 one-time hashed token (short TTL, shown once); redeeming it revokes other
 sessions. Drafts and the mark stay client-side. CLI only where the API
@@ -415,8 +416,10 @@ wait).
 
 ### Shell
 
-- Login mark. Freeze a mark early and put it on the login screen
-  ([fe#22](https://github.com/ahyibrahim/hermes-fe/issues/22))
+- Hermes mark: one frozen asset (H + wing + sandal), two placements.
+  Umbrella [fe#53](https://github.com/ahyibrahim/hermes-fe/issues/53)
+  (login [fe#22](https://github.com/ahyibrahim/hermes-fe/issues/22),
+  favicon [fe#54](https://github.com/ahyibrahim/hermes-fe/issues/54))
 - Inline `code` and emphasis only
   ([fe#43](https://github.com/ahyibrahim/hermes-fe/issues/43))
 - Date separators and copy on fenced code blocks
