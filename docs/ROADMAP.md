@@ -436,8 +436,8 @@ wait).
 
 v0.10.0 is the last tagged release. The next version is not named yet; issues
 stay on `backlog` until they are. This sprint is still choosing among the
-backlog clusters below. **Chat-shell icon buttons** is a new UX cluster, web
-only, no API.
+backlog clusters below. Two new **web-only UX** clusters (no API unless a
+child says otherwise):
 
 - Chat-shell icon buttons: replace compact chrome labels with inline SVG
   (`aria-label` / `title`; no icon library). Move Unsend to the **left** of
@@ -447,13 +447,22 @@ only, no API.
   [fe#62](https://github.com/ahyibrahim/hermes-fe/issues/62) copy,
   [fe#63](https://github.com/ahyibrahim/hermes-fe/issues/63) composer attach/send,
   [fe#64](https://github.com/ahyibrahim/hermes-fe/issues/64) join call,
-  [fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65) call-bar mute/leave,
+  [fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65) mute/leave icons,
   [fe#66](https://github.com/ahyibrahim/hermes-fe/issues/66) jump to latest,
   [fe#67](https://github.com/ahyibrahim/hermes-fe/issues/67) file download)
+- In-call interface: after join, a **minimal drawer** drops from the top bar
+  (avatars + controls, not a Discord video stage); pick a microphone mid-call;
+  leave layout room for a later screen share. Umbrella
+  [fe#68](https://github.com/ahyibrahim/hermes-fe/issues/68)
+  ([fe#69](https://github.com/ahyibrahim/hermes-fe/issues/69) drawer,
+  [fe#70](https://github.com/ahyibrahim/hermes-fe/issues/70) input device,
+  [fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71) share-ready layout).
+  Mute/leave icons ([fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65))
+  belong in this drawer. Join call stays in the room header (fe#64).
 
 Keep form actions as text (auth, profile, Create room, Sign out, Enable
-notifications). Expand call-bar UX on fe#65 rather than inventing a second
-voice theme.
+notifications). Screen capture and new call signaling wait; fe#71 is layout
+only.
 
 ## Backlog (unscheduled)
 
@@ -462,6 +471,8 @@ label until then.
 
 - Chat-shell icon buttons — tracked under Current sprint; umbrella
   [fe#60](https://github.com/ahyibrahim/hermes-fe/issues/60)
+- In-call interface (drawer, mic picker, share-ready layout) — Current sprint;
+  umbrella [fe#68](https://github.com/ahyibrahim/hermes-fe/issues/68)
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
   last admin); delete a group (creator or admin; hard-delete; confirm UI);
   kick; admin-delete of others' messages. Umbrella
