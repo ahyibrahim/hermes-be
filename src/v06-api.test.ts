@@ -63,7 +63,12 @@ test('v0.6.0 REST: users, rooms, DMs, logout', async () => {
 
   const users = await json('GET', '/users', undefined, aliceToken);
   assert.equal(users.status, 200);
-  assert.equal(Array.isArray(users.data) && (users.data as unknown[]).length, 2);
+  const directory = users.data as Array<{ username: string; system?: boolean }>;
+  assert.deepEqual(
+    directory.map((row) => row.username).sort(),
+    ['alice', 'bob', 'hermes']
+  );
+  assert.equal(directory.find((row) => row.username === 'hermes')?.system, true);
 
   const online = await json('GET', '/users/online', undefined, aliceToken);
   assert.equal(online.status, 200);

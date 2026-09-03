@@ -27,6 +27,7 @@ export interface PublicUser {
   role: 'member' | 'admin';
   avatar_file_id: number | null;
   color: string | null;
+  system: boolean;
 }
 
 function membersOf(roomId: number): string[] {
@@ -49,22 +50,55 @@ function toSummary(room: RoomRecord): RoomSummary {
   return { ...room, members: membersOf(room.id) };
 }
 
+type UserRow = {
+  id: number;
+  username: string;
+  role: 'member' | 'admin';
+  avatar_file_id: number | null;
+  color: string | null;
+  system: number | boolean | null;
+};
+
+const USER_COLUMNS = 'id, username, role, avatar_file_id, color, system';
+
+function mapPublicUser(row: UserRow | undefined): PublicUser | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    avatar_file_id: row.avatar_file_id,
+    color: row.color,
+    system: Number(row.system) === 1 || row.system === true,
+  };
+}
+
 export function getUserByUsername(username: string): PublicUser | undefined {
-  return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE username = ?')
-    .get(username) as PublicUser | undefined;
+  return mapPublicUser(
+    getDb()
+      .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE username = ?`)
+      .get(username) as UserRow | undefined
+  );
 }
 
 export function getUserById(id: number): PublicUser | undefined {
-  return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE id = ?')
-    .get(id) as PublicUser | undefined;
+  return mapPublicUser(
+    getDb()
+      .prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`)
+      .get(id) as UserRow | undefined
+  );
 }
 
 export function listUsers(): PublicUser[] {
-  return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id, color FROM users ORDER BY username ASC')
-    .all() as PublicUser[];
+  return (
+    getDb()
+      .prepare(`SELECT ${USER_COLUMNS} FROM users ORDER BY username ASC`)
+      .all() as UserRow[]
+  )
+    .map((row) => mapPublicUser(row))
+    .filter((user): user is PublicUser => Boolean(user));
 }
 
 export function getRoomBySlug(slug: string): RoomRecord | undefined {
@@ -182,9 +216,14 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
     throw new Error('cannot DM yourself');
   }
 
+  const other = getUserById(otherUserId);
+  if (other?.system) {
+    throw new Error('cannot DM a system user');
+  }
+
   const members = getDb()
     .prepare('SELECT id, username FROM users WHERE id IN (?, ?) ORDER BY username ASC')
-    .all(userId, otherUserId) as PublicUser[];
+    .all(userId, otherUserId) as Array<{ id: number; username: string }>;
 
   if (members.length !== 2) {
     throw new Error('both users must exist');

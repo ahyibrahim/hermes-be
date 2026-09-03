@@ -17,6 +17,10 @@ test('registers with argon2id, first user is admin, SHA256 rehashes on login', a
   const alice = await registerUser('alice', 'hunter2');
   assert.equal(alice.username, 'alice');
   assert.equal(alice.role, 'admin');
+  assert.equal(getProfile('hermes')?.system, true);
+  assert.equal(getProfile('hermes')?.role, 'member');
+  assert.equal(await loginUser('hermes', 'anything'), null);
+  await assert.rejects(() => registerUser('hermes', 'hunter2'), /reserved/);
   const stored = getDb().prepare('SELECT password FROM users WHERE username = ?').get('alice') as {
     password: string;
   };

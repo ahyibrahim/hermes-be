@@ -76,7 +76,7 @@ test('migrates slug+username membership to room_id+user_id and keeps message his
     .all() as Array<{ username: string }>;
   assert.deepEqual(
     members.map((row) => row.username).sort(),
-    ['alice']
+    ['alice', 'hermes']
   );
 
   const history = db.prepare('SELECT room, content FROM messages').all() as Array<{

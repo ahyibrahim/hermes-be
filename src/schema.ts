@@ -1,4 +1,8 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+import { USER_COLOR_PALETTE } from './colors';
+import { SYSTEM_PASSWORD_PLACEHOLDER, SYSTEM_USERNAME } from './system-user';
 
 type SqliteDb = Database.Database;
 
@@ -232,9 +236,13 @@ function backfillFirstAdmin(db: SqliteDb, log: SchemaLogger): void {
     return;
   }
 
-  const first = db.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get() as
-    | { id: number }
-    | undefined;
+  const first = db
+    .prepare(
+      `SELECT id FROM users
+       WHERE COALESCE(system, 0) = 0
+       ORDER BY id ASC LIMIT 1`
+    )
+    .get() as { id: number } | undefined;
   if (!first) {
     note(log, false, 'backfill', { table: 'users', column: 'role' }, 'no users to promote to admin');
     return;
@@ -343,6 +351,159 @@ function backfillGeneralMembership(db: SqliteDb, log: SchemaLogger): void {
   );
 }
 
+const projectRoot = path.resolve(__dirname, '..');
+
+function resolveFilesDir(): string {
+  return process.env.HERMES_FILES_DIR
+    ? path.resolve(process.env.HERMES_FILES_DIR)
+    : path.resolve(projectRoot, 'data', 'files');
+}
+
+function readPackageVersion(): string {
+  try {
+    const raw = fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8');
+    const parsed = JSON.parse(raw) as { version?: string };
+    return parsed.version?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function pickSystemColor(db: SqliteDb): string | null {
+  const taken = new Set(
+    (
+      db
+        .prepare("SELECT color FROM users WHERE color IS NOT NULL AND color != ''")
+        .all() as Array<{ color: string }>
+    ).map((row) => row.color)
+  );
+  return USER_COLOR_PALETTE.find((slot) => !taken.has(slot)) ?? null;
+}
+
+function seedSystemAvatar(db: SqliteDb, log: SchemaLogger, userId: number): void {
+  const existing = db.prepare('SELECT avatar_file_id FROM users WHERE id = ?').get(userId) as
+    | { avatar_file_id: number | null }
+    | undefined;
+  if (existing?.avatar_file_id) {
+    const file = db
+      .prepare('SELECT path FROM files WHERE id = ?')
+      .get(existing.avatar_file_id) as { path: string } | undefined;
+    if (file && fs.existsSync(file.path)) {
+      note(log, false, 'seed_avatar', { username: SYSTEM_USERNAME }, 'hermes avatar already present');
+      return;
+    }
+  }
+
+  const source = path.join(projectRoot, 'assets', 'hermes-mark.png');
+  if (!fs.existsSync(source)) {
+    note(log, false, 'seed_avatar', { username: SYSTEM_USERNAME }, 'hermes mark asset missing');
+    return;
+  }
+
+  const filesDir = resolveFilesDir();
+  fs.mkdirSync(filesDir, { recursive: true });
+  const storedPath = path.join(filesDir, 'hermes-mark.png');
+  fs.copyFileSync(source, storedPath);
+  const stat = fs.statSync(storedPath);
+  const createdAt = new Date().toISOString();
+  const inserted = db
+    .prepare(
+      `INSERT INTO files (room, uploader, original_name, mime, size, path, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run('general', SYSTEM_USERNAME, 'hermes-mark.png', 'image/png', stat.size, storedPath, createdAt);
+  const fileId = Number(inserted.lastInsertRowid);
+  db.prepare('UPDATE users SET avatar_file_id = ? WHERE id = ?').run(fileId, userId);
+  note(log, true, 'seed_avatar', { username: SYSTEM_USERNAME, fileId }, 'seeded hermes mark avatar');
+}
+
+function seedSystemHermes(db: SqliteDb, log: SchemaLogger): void {
+  const existing = db
+    .prepare('SELECT id, system, role FROM users WHERE username = ?')
+    .get(SYSTEM_USERNAME) as { id: number; system: number; role: string } | undefined;
+
+  let userId: number;
+  if (!existing) {
+    const color = pickSystemColor(db);
+    const inserted = db
+      .prepare(
+        `INSERT INTO users (username, password, role, system, color, created_at)
+         VALUES (?, ?, 'member', 1, ?, ?)`
+      )
+      .run(SYSTEM_USERNAME, SYSTEM_PASSWORD_PLACEHOLDER, color, new Date().toISOString());
+    userId = Number(inserted.lastInsertRowid);
+    note(log, true, 'seed_user', { username: SYSTEM_USERNAME, userId }, 'seeded system user hermes');
+  } else {
+    userId = existing.id;
+    if (!existing.system || existing.role === 'admin') {
+      db.prepare("UPDATE users SET system = 1, role = 'member', password = ? WHERE id = ?").run(
+        SYSTEM_PASSWORD_PLACEHOLDER,
+        userId
+      );
+      note(log, true, 'seed_user', { username: SYSTEM_USERNAME, userId }, 'converted hermes to a system user');
+      backfillFirstAdmin(db, log);
+    } else {
+      note(log, false, 'seed_user', { username: SYSTEM_USERNAME, userId }, 'system user hermes already present');
+    }
+  }
+
+  const general = db.prepare("SELECT id FROM rooms WHERE slug = 'general'").get() as
+    | { id: number }
+    | undefined;
+  if (general) {
+    db.prepare('INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)').run(
+      general.id,
+      userId
+    );
+  }
+
+  seedSystemAvatar(db, log, userId);
+}
+
+export function postReleaseAnnouncement(
+  db: SqliteDb,
+  log: SchemaLogger = silentLogger,
+  version = readPackageVersion()
+): boolean {
+  if (!version) {
+    note(log, false, 'announce', { version }, 'no package version to announce');
+    return false;
+  }
+
+  const already = db.prepare('SELECT message_id FROM announcements WHERE version = ?').get(version) as
+    | { message_id: number }
+    | undefined;
+  if (already) {
+    note(log, false, 'announce', { version, messageId: already.message_id }, `v${version} already announced`);
+    return false;
+  }
+
+  const copyPath = path.join(projectRoot, 'docs', 'announcements', `v${version}.md`);
+  if (!fs.existsSync(copyPath)) {
+    note(log, false, 'announce', { version }, `no announcement copy for v${version}`);
+    return false;
+  }
+
+  const content = fs.readFileSync(copyPath, 'utf8').trim();
+  if (!content) {
+    note(log, false, 'announce', { version }, `empty announcement copy for v${version}`);
+    return false;
+  }
+
+  const createdAt = new Date().toISOString();
+  const inserted = db
+    .prepare('INSERT INTO messages (room, sender, content, created_at) VALUES (?, ?, ?, ?)')
+    .run('general', SYSTEM_USERNAME, content, createdAt);
+  const messageId = Number(inserted.lastInsertRowid);
+  db.prepare('INSERT INTO announcements (version, message_id, posted_at) VALUES (?, ?, ?)').run(
+    version,
+    messageId,
+    createdAt
+  );
+  note(log, true, 'announce', { version, messageId }, `posted v${version} announcement to general`);
+  return true;
+}
+
 export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): void {
   ensureTable(
     db,
@@ -353,6 +514,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
       username TEXT NOT NULL UNIQUE,
       password TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'member',
+      system INTEGER NOT NULL DEFAULT 0,
       avatar_file_id INTEGER,
       color TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -427,6 +589,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   addColumnIfMissing(db, log, 'users', 'created_at', "TEXT DEFAULT ''");
   backfillEmpty(db, log, 'users', 'created_at');
   addColumnIfMissing(db, log, 'users', 'role', "TEXT NOT NULL DEFAULT 'member'");
+  addColumnIfMissing(db, log, 'users', 'system', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, log, 'users', 'avatar_file_id', 'INTEGER');
   addColumnIfMissing(db, log, 'users', 'color', 'TEXT');
   backfillFirstAdmin(db, log);
@@ -520,4 +683,17 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   backfillIsoTimestamps(db, log, 'files');
   backfillIsoTimestamps(db, log, 'rooms');
   backfillIsoTimestamps(db, log, 'users');
+
+  ensureTable(
+    db,
+    log,
+    'announcements',
+    `CREATE TABLE IF NOT EXISTS announcements (
+      version TEXT PRIMARY KEY,
+      message_id INTEGER NOT NULL,
+      posted_at TEXT NOT NULL
+    )`
+  );
+  seedSystemHermes(db, log);
+  postReleaseAnnouncement(db, log);
 }

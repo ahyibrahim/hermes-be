@@ -82,7 +82,7 @@ test('an already-populated pre-v0.3.0 database opens cleanly and its users can l
   }>;
   assert.deepEqual(
     users.map((row) => row.username),
-    ['legacy', 'newcomer']
+    ['legacy', 'hermes', 'newcomer']
   );
 
   closeDb();
@@ -120,7 +120,7 @@ test('migrating twice is a no-op', () => {
       (row) => row.name
     )
   );
-  for (const table of ['users', 'sessions', 'messages', 'rooms', 'room_members', 'files']) {
+  for (const table of ['users', 'sessions', 'messages', 'rooms', 'room_members', 'files', 'announcements']) {
     assert.ok(tables.has(table), `expected table ${table}`);
   }
 

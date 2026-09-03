@@ -16,6 +16,7 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
     addUserToGeneralRoom,
     createGroupRoom,
     getOrCreateDmRoom,
+    getUserByUsername,
     isRoomMember,
     listRoomsForUser,
   } = await import('./rooms');
@@ -36,7 +37,13 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
 
   assert.equal(listRoomsForUser(alice.username).length, 3);
   assert.equal(isRoomMember('general', 'alice'), true);
+  assert.equal(isRoomMember('general', 'hermes'), true);
   assert.equal(isRoomMember(group.slug, 'bob'), true);
+
+  const hermes = getUserByUsername('hermes');
+  assert.ok(hermes);
+  assert.equal(hermes.system, true);
+  assert.throws(() => getOrCreateDmRoom(alice.id, hermes.id), /system user/);
 
   assert.throws(() => getOrCreateDmRoom(alice.id, alice.id), /cannot DM yourself/);
 });
