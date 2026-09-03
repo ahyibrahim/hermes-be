@@ -1,4 +1,5 @@
 import { getDb } from './database';
+import { isoTimestamp } from './colors';
 
 export interface RoomRecord {
   id: number;
@@ -6,6 +7,14 @@ export interface RoomRecord {
   name: string;
   type: 'group' | 'dm';
   created_at: string;
+}
+
+export interface LastMessagePreview {
+  id: number;
+  sender: string;
+  content: string;
+  deleted: boolean;
+  file: boolean;
 }
 
 export interface RoomSummary extends RoomRecord {
@@ -126,7 +135,7 @@ export function listRoomsForUser(username: string): RoomSummary[] {
       SELECT r.id, r.slug, r.name, r.type, r.created_at
       FROM rooms r
       JOIN room_members rm ON rm.room_id = r.id
-      WHERE rm.user_id = ?
+      WHERE rm.user_id = ? AND rm.hidden_at IS NULL
       ORDER BY r.created_at ASC, r.id ASC
     `
     )
@@ -186,6 +195,7 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
   if (existing) {
     addMemberIds(existing.id, userId);
     addMemberIds(existing.id, otherUserId);
+    clearHiddenAt(existing.id, userId);
     return toSummary(existing);
   }
 
@@ -211,10 +221,13 @@ export function leaveRoom(slug: string, username: string): { ok: true } | { erro
   if (slug === 'general') {
     return { error: 'cannot leave general' };
   }
+  const room = getRoomBySlug(slug);
+  if (room?.type === 'dm') {
+    return { error: 'cannot leave a DM' };
+  }
   if (!isRoomMember(slug, username)) {
     return { error: 'not a member of this room' };
   }
-  const room = getRoomBySlug(slug);
   const user = getUserByUsername(username);
   if (!room || !user) {
     return { error: 'not a member of this room' };
@@ -225,13 +238,94 @@ export function leaveRoom(slug: string, username: string): { ok: true } | { erro
   return { ok: true };
 }
 
+export function hideRoom(slug: string, username: string): { ok: true } | { error: string } {
+  if (slug === 'general') {
+    return { error: 'cannot hide general' };
+  }
+  const room = getRoomBySlug(slug);
+  if (!room) {
+    return { error: 'not a member of this room' };
+  }
+  if (room.type !== 'dm') {
+    return { error: 'can only hide a DM' };
+  }
+  const user = getUserByUsername(username);
+  if (!user || !isRoomMember(slug, username)) {
+    return { error: 'not a member of this room' };
+  }
+  getDb()
+    .prepare('UPDATE room_members SET hidden_at = ? WHERE room_id = ? AND user_id = ?')
+    .run(isoTimestamp(), room.id, user.id);
+  return { ok: true };
+}
+
+function clearHiddenAt(roomId: number, userId?: number): void {
+  if (userId != null) {
+    getDb()
+      .prepare('UPDATE room_members SET hidden_at = NULL WHERE room_id = ? AND user_id = ?')
+      .run(roomId, userId);
+    return;
+  }
+  getDb().prepare('UPDATE room_members SET hidden_at = NULL WHERE room_id = ?').run(roomId);
+}
+
+export function revealRoomMembers(slug: string): void {
+  const room = getRoomBySlug(slug);
+  if (!room || room.type !== 'dm') {
+    return;
+  }
+  clearHiddenAt(room.id);
+}
+
+const LAST_MESSAGE_PREVIEW_CHARS = 80;
+
+export function lastMessagePreview(slug: string): LastMessagePreview | null {
+  const row = getDb()
+    .prepare(
+      `SELECT m.id, m.sender, m.content, m.deleted_at, m.file_id, f.original_name
+       FROM messages m
+       LEFT JOIN files f ON f.id = m.file_id
+       WHERE m.room = ?
+       ORDER BY m.id DESC
+       LIMIT 1`
+    )
+    .get(slug) as
+    | {
+        id: number;
+        sender: string;
+        content: string;
+        deleted_at: string | null;
+        file_id: number | null;
+        original_name: string | null;
+      }
+    | undefined;
+  if (!row) {
+    return null;
+  }
+  if (row.deleted_at) {
+    return { id: row.id, sender: row.sender, content: '', deleted: true, file: false };
+  }
+  const file = row.file_id != null;
+  const raw = row.content || row.original_name || '';
+  return {
+    id: row.id,
+    sender: row.sender,
+    content: raw.length > LAST_MESSAGE_PREVIEW_CHARS ? raw.slice(0, LAST_MESSAGE_PREVIEW_CHARS) : raw,
+    deleted: false,
+    file,
+  };
+}
+
 export function unreadCount(userId: number, slug: string): number {
   const read = getDb()
     .prepare('SELECT last_message_id FROM room_reads WHERE user_id = ? AND room = ?')
     .get(userId, slug) as { last_message_id: number } | undefined;
   const watermark = read?.last_message_id ?? 0;
   const row = getDb()
-    .prepare('SELECT COUNT(*) AS n FROM messages WHERE room = ? AND id > ?')
+    .prepare(
+      `SELECT COUNT(*) AS n FROM messages
+       WHERE room = ? AND id > ? AND (deleted_at IS NULL OR deleted_at = '')`
+    )
     .get(slug, watermark) as { n: number };
   return row.n;
 }

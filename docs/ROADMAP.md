@@ -429,6 +429,8 @@ wait).
 - Last-message preview in the room and DM rails
   ([be#56](https://github.com/ahyibrahim/hermes-be/issues/56),
   [fe#51](https://github.com/ahyibrahim/hermes-fe/issues/51))
+- Unread increments when you are in the room but scrolled up
+  ([fe#57](https://github.com/ahyibrahim/hermes-fe/issues/57))
 
 ## Backlog (unscheduled)
 

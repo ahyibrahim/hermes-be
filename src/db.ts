@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { getDb } from './database';
 import { isoTimestamp, toIsoTimestamp } from './colors';
 import {
@@ -19,6 +20,7 @@ export interface MessageRecord {
   content: string;
   created_at: string;
   file_id?: number | null;
+  deleted_at?: string | null;
 }
 
 export interface FileRecord {
@@ -34,7 +36,7 @@ export interface FileRecord {
 
 export function listMessages(room: string): MessageRecord[] {
   const stmt = getDb().prepare(
-    'SELECT id, room, sender, content, created_at, file_id FROM messages WHERE room = ? ORDER BY id ASC'
+    'SELECT id, room, sender, content, created_at, file_id, deleted_at FROM messages WHERE room = ? ORDER BY id ASC'
   );
 
   return (stmt.all(room) as MessageRecord[]).map((message) => ({
@@ -63,7 +65,76 @@ export function createMessage(
     content,
     created_at: createdAt,
     file_id: fileId,
+    deleted_at: null,
   };
+}
+
+export function getMessageById(id: number): MessageRecord | undefined {
+  const row = getDb()
+    .prepare(
+      'SELECT id, room, sender, content, created_at, file_id, deleted_at FROM messages WHERE id = ?'
+    )
+    .get(id) as MessageRecord | undefined;
+  if (!row) {
+    return undefined;
+  }
+  return { ...row, created_at: toIsoTimestamp(row.created_at) };
+}
+
+function toTombstone(message: MessageRecord, deletedAt: string): MessageRecord {
+  return {
+    ...message,
+    content: '',
+    file_id: null,
+    deleted_at: deletedAt,
+  };
+}
+
+function deleteOrphanFile(fileId: number): void {
+  const avatar = getDb()
+    .prepare('SELECT 1 AS ok FROM users WHERE avatar_file_id = ?')
+    .get(fileId) as { ok: number } | undefined;
+  if (avatar) {
+    return;
+  }
+  const used = getDb()
+    .prepare('SELECT 1 AS ok FROM messages WHERE file_id = ?')
+    .get(fileId) as { ok: number } | undefined;
+  if (used) {
+    return;
+  }
+  const file = getFileRecord(fileId);
+  if (!file) {
+    return;
+  }
+  fs.rmSync(file.path, { force: true });
+  getDb().prepare('DELETE FROM files WHERE id = ?').run(fileId);
+}
+
+export function unsendMessage(
+  id: number,
+  username: string
+): { message: MessageRecord } | { error: 'not_found' | 'forbidden' } {
+  const existing = getMessageById(id);
+  if (!existing) {
+    return { error: 'not_found' };
+  }
+  if (existing.sender !== username) {
+    return { error: 'forbidden' };
+  }
+  if (existing.deleted_at) {
+    return { message: toTombstone(existing, existing.deleted_at) };
+  }
+
+  const deletedAt = isoTimestamp();
+  const previousFileId = existing.file_id ?? null;
+  getDb()
+    .prepare('UPDATE messages SET content = ?, file_id = NULL, deleted_at = ? WHERE id = ?')
+    .run('', deletedAt, id);
+  if (previousFileId != null) {
+    deleteOrphanFile(previousFileId);
+  }
+  return { message: toTombstone({ ...existing, created_at: existing.created_at }, deletedAt) };
 }
 
 export function ensureRoom(slug: string, name = slug): TypedRoomRecord {

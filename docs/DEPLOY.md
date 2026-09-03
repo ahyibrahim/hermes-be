@@ -334,6 +334,33 @@ rollback. A rollback of a release that shipped a web bundle needs
 `HERMES_WEB_BUNDLE` pointing at that tag's `apps/web/build` as well, so the SPA
 and the API stay paired. Health-gated rollback inside `deploy.sh` is backlog.
 
+### Locked-out sole admin
+
+There is **no app backdoor**. The first registrant is admin; this release does
+not promote or demote anyone. A locked-out admin issues a one-hour reset
+token for any user (including themselves) from the people rail. If that sole
+admin cannot sign in either, recover from SQLite on the host — not from the
+UI.
+
+`p1`'s database is `/var/lib/hermes/p1/hermes.db`. Stop the unit so SQLite is
+quiet, copy a backup, then either set a new argon2id hash on `users.password`
+for that username or delete their row in `sessions` after you have a hash you
+trust. Restart is the migration.
+
+```sh
+sudo systemctl stop hermes-be@p1
+sudo cp -a /var/lib/hermes/p1/hermes.db \
+  /var/lib/hermes/p1/hermes.db.pre-admin-reset
+sqlite3 /var/lib/hermes/p1/hermes.db
+sudo systemctl start hermes-be@p1
+```
+
+Hash a replacement password with the same argon2id settings the process uses
+(`memoryCost` 19456, `timeCost` 2) and `UPDATE users SET password = '…'
+WHERE username = '…';`. Then `DELETE FROM sessions WHERE username = '…';`
+and `DELETE FROM password_reset_tokens WHERE username = '…';`. Do not type a
+GitHub password into git, and do not log a reset token.
+
 ## Environment variables
 
 All of these are read from `/etc/hermes/<instance>.env` by the systemd unit

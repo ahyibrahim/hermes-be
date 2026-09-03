@@ -76,7 +76,9 @@ test('v0.9.0 REST: timestamps, leave, unread, colors', async () => {
   const dmSlug = (dm.data as { slug: string }).slug;
 
   const left = await json('POST', '/rooms/leave', { room: dmSlug }, aliceToken);
-  assert.equal(left.status, 200);
+  assert.equal(left.status, 400);
+  const hid = await json('POST', '/rooms/hide', { room: dmSlug }, aliceToken);
+  assert.equal(hid.status, 200);
   const afterLeave = await json('GET', '/rooms', undefined, aliceToken);
   const aliceRooms = afterLeave.data as Array<{ slug: string }>;
   assert.equal(aliceRooms.some((room) => room.slug === dmSlug), false);

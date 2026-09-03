@@ -16,6 +16,7 @@ import {
   isRoomMember,
   listMessages,
   listRoomMembers,
+  unsendMessage,
 } from './db';
 import {
   addUserToGeneralRoom,
@@ -23,15 +24,26 @@ import {
   getOrCreateDmRoom,
   getUserById,
   getUserByUsername,
+  hideRoom,
+  lastMessagePreview,
   leaveRoom,
   listRoomsForUser,
   listUsers,
   markRoomRead,
+  revealRoomMembers,
   setUserColor,
   takenColors,
   unreadCount,
 } from './rooms';
-import { changePassword, getProfile, loginUser, registerUser, setAvatarFileId } from './auth';
+import {
+  changePassword,
+  getProfile,
+  issuePasswordReset,
+  loginUser,
+  redeemPasswordReset,
+  registerUser,
+  setAvatarFileId,
+} from './auth';
 import { isUserColor, USER_COLOR_PALETTE } from './colors';
 import { getDb } from './database';
 import { deleteOtherSessions, deleteSession, findSessionUser } from './sessions';
@@ -484,6 +496,31 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
   );
 
+  fastify.post(
+    '/auth/reset',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
+      const body = request.body as { username?: string; token?: string; password?: string };
+      if (!body.username || !body.token || !body.password) {
+        reply.code(400);
+        return { error: 'username, token, and password are required' };
+      }
+
+      const session = await redeemPasswordReset(body.username, body.token, body.password);
+      if (!session) {
+        request.log.info(
+          { event: 'password_reset_failure', username: body.username.trim().toLowerCase() },
+          'password reset failed'
+        );
+        reply.code(401);
+        return { error: 'invalid reset token' };
+      }
+
+      request.log.info({ event: 'password_reset_success', username: session.username }, 'password reset redeemed');
+      return session;
+    }
+  );
+
   fastify.post('/auth/logout', async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
@@ -558,8 +595,23 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         reply.code(409);
         return { error: 'color is taken' };
       }
-      setUserColor(me.id, body.color);
-      return getProfile(username);
+      try {
+        setUserColor(me.id, body.color);
+      } catch (error) {
+        const message = String((error as Error).message);
+        if (message.includes('UNIQUE') && (message.includes('idx_users_color') || message.includes('users.color'))) {
+          reply.code(409);
+          return { error: 'color is taken' };
+        }
+        throw error;
+      }
+      const profile = getProfile(username);
+      if (profile) {
+        for (const name of onlineUsernames()) {
+          sendToUser(name, { type: 'user_updated', user: profile });
+        }
+      }
+      return profile;
     }
 
     if (!body.current_password || !body.password || !body.password.trim()) {
@@ -661,6 +713,35 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return reply.send(fs.createReadStream(file.path));
   });
 
+  fastify.post(
+    '/users/:username/password-reset',
+    async (request: FastifyRequest<{ Params: { username: string } }>, reply) => {
+      const actorName = resolveUser(request, reply);
+      if (!actorName) {
+        return { error: 'authentication required' };
+      }
+
+      const actor = getUserByUsername(actorName);
+      if (!actor || actor.role !== 'admin') {
+        reply.code(403);
+        return { error: 'admin required' };
+      }
+
+      const issued = issuePasswordReset(request.params.username);
+      if ('error' in issued) {
+        reply.code(404);
+        return { error: 'user not found' };
+      }
+
+      request.log.info(
+        { event: 'password_reset_issued', username: request.params.username.trim().toLowerCase() },
+        'password reset token issued'
+      );
+      reply.code(201);
+      return issued;
+    }
+  );
+
   fastify.get('/rooms', async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
@@ -679,6 +760,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         created_at: room.created_at,
         members,
         unread_count: me ? unreadCount(me.id, room.slug) : 0,
+        last_message: lastMessagePreview(room.slug),
       };
     });
   });
@@ -758,11 +840,36 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
     const result = leaveRoom(slug, username);
     if ('error' in result) {
-      reply.code(result.error === 'cannot leave general' ? 400 : 403);
+      reply.code(
+        result.error === 'cannot leave general' || result.error === 'cannot leave a DM' ? 400 : 403
+      );
       return { error: result.error };
     }
 
     request.log.info({ event: 'room_leave', user: username, room: slug }, 'left room');
+    return { ok: true, room: slug };
+  });
+
+  fastify.post('/rooms/hide', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { room?: string };
+    const slug = normalizeRoomSlug(body.room);
+    if (!slug) {
+      reply.code(400);
+      return { error: 'room is required' };
+    }
+
+    const result = hideRoom(slug, username);
+    if ('error' in result) {
+      reply.code(result.error === 'not a member of this room' ? 403 : 400);
+      return { error: result.error };
+    }
+
+    request.log.info({ event: 'room_hide', user: username, room: slug }, 'hid DM');
     return { ok: true, room: slug };
   });
 
@@ -854,9 +961,32 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       addRoomMember(slug, username);
     }
 
+    revealRoomMembers(slug);
     const message = createMessage(slug, username, body.content.trim());
     broadcastToMembers(slug, { type: 'message', message });
     return message;
+  });
+
+  fastify.delete('/messages/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      reply.code(400);
+      return { error: 'id is required' };
+    }
+
+    const result = unsendMessage(id, username);
+    if ('error' in result) {
+      reply.code(result.error === 'not_found' ? 404 : 403);
+      return { error: result.error === 'not_found' ? 'message not found' : 'only the sender can unsend' };
+    }
+
+    broadcastToMembers(result.message.room, { type: 'message_deleted', message: result.message });
+    return result.message;
   });
 
   fastify.post('/files', async (request, reply) => {
@@ -903,6 +1033,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       size,
       storedPath
     );
+    revealRoomMembers(slug);
     const message = createMessage(slug, username, file.original_name, file.id);
     broadcastToMembers(slug, { type: 'message', message });
     request.log.info(

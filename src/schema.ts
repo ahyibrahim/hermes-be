@@ -195,6 +195,34 @@ function backfillUserColors(db: SqliteDb, log: SchemaLogger): void {
   );
 }
 
+function ensureUniqueUserColorIndex(db: SqliteDb, log: SchemaLogger): void {
+  const dupes = db
+    .prepare(
+      `SELECT color FROM users
+       WHERE color IS NOT NULL AND color != ''
+       GROUP BY color
+       HAVING COUNT(*) > 1`
+    )
+    .all() as Array<{ color: string }>;
+  if (dupes.length > 0) {
+    note(
+      log,
+      false,
+      'create_index',
+      { index: 'idx_users_color', skipped: true, duplicates: dupes.length },
+      'skipped unique users.color index because the 11th user wraps and shares a slot'
+    );
+    return;
+  }
+
+  ensureIndex(
+    db,
+    log,
+    'idx_users_color',
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_color ON users(color) WHERE color IS NOT NULL AND color != ''"
+  );
+}
+
 function backfillFirstAdmin(db: SqliteDb, log: SchemaLogger): void {
   const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get() as {
     n: number;
@@ -403,12 +431,14 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   addColumnIfMissing(db, log, 'users', 'color', 'TEXT');
   backfillFirstAdmin(db, log);
   backfillUserColors(db, log);
+  ensureUniqueUserColorIndex(db, log);
 
   addColumnIfMissing(db, log, 'messages', 'room', "TEXT NOT NULL DEFAULT 'general'");
   addColumnIfMissing(db, log, 'messages', 'sender', "TEXT NOT NULL DEFAULT 'anonymous'");
   addColumnIfMissing(db, log, 'messages', 'content', "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, log, 'messages', 'created_at', "TEXT DEFAULT ''");
   addColumnIfMissing(db, log, 'messages', 'file_id', 'INTEGER');
+  addColumnIfMissing(db, log, 'messages', 'deleted_at', 'TEXT');
   backfillEmpty(db, log, 'messages', 'created_at');
 
   const rebuildRooms = tableExists(db, 'rooms') && !columnNames(db, 'rooms').has('slug');
@@ -459,7 +489,20 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   );
 
   migrateRoomMembers(db, log);
+  addColumnIfMissing(db, log, 'room_members', 'hidden_at', 'TEXT');
   backfillGeneralMembership(db, log);
+
+  ensureTable(
+    db,
+    log,
+    'password_reset_tokens',
+    `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      username TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  );
 
   ensureTable(
     db,
