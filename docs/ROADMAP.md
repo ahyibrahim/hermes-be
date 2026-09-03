@@ -449,7 +449,8 @@ child says otherwise):
   [fe#64](https://github.com/ahyibrahim/hermes-fe/issues/64) join call,
   [fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65) mute/leave icons,
   [fe#66](https://github.com/ahyibrahim/hermes-fe/issues/66) jump to latest,
-  [fe#67](https://github.com/ahyibrahim/hermes-fe/issues/67) file download)
+  [fe#67](https://github.com/ahyibrahim/hermes-fe/issues/67) file download,
+  [fe#72](https://github.com/ahyibrahim/hermes-fe/issues/72) notifications bell)
 - In-call interface: after join, a **minimal drawer** drops from the top bar
   (avatars + controls, not a Discord video stage); pick a microphone mid-call;
   leave layout room for a later screen share. Umbrella
@@ -460,9 +461,8 @@ child says otherwise):
   Mute/leave icons ([fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65))
   belong in this drawer. Join call stays in the room header (fe#64).
 
-Keep form actions as text (auth, profile, Create room, Sign out, Enable
-notifications). Screen capture and new call signaling wait; fe#71 is layout
-only.
+Keep form actions as text (auth, profile, Create room, Sign out). Screen
+capture and new call signaling wait; fe#71 is layout only.
 
 ## Backlog (unscheduled)
 
