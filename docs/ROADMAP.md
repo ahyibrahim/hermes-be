@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.10.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.11.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -28,7 +28,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.7.0 - Accounts and security (live on `p1`)
 - [x] v0.8.0 - Voice chat (live on `p1`; HTTPS via Tailscale Serve)
 - [x] v0.9.0 - Daily-driver UX (live on `p1`)
-- [ ] v0.10.0 - Polish and recovery (current)
+- [x] v0.10.0 - Polish and recovery (live on `p1`)
+- [ ] v0.11.0 - Call chrome and system hermes (current)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -114,7 +115,8 @@ graph LR
   v06 --> v08[v0.8.0 Voice chat — shipped]
   v07 --> v08
   v08 --> v09[v0.9.0 Daily-driver UX — shipped]
-  v09 --> v10[v0.10.0 Polish and recovery]
+  v09 --> v10[v0.10.0 Polish and recovery — shipped]
+  v10 --> v11[v0.11.0 Call chrome and system hermes]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -130,7 +132,9 @@ accounts. Rooms/DMs and accounts are independent of each other and of
 automation — they still want a UI, which v0.4.0 shipped. Voice chat needed
 both a UI and the hardened auth. Daily-driver UX follows voice because the
 shell is now the product. v0.10.0 is a second pass on that shell (recovery,
-hide-not-leave DMs, unsend, leftover QoL) rather than roles. Promote/demote,
+hide-not-leave DMs, unsend, leftover QoL) rather than roles. v0.11.0 is a
+chrome pass plus the first system voice: quieter header controls, a call
+drawer, and one idempotent `#general` post from reserved `hermes`. Promote/demote,
 delete-group, and kick stay backlog until we want `users.role` to be more
 than a label.
 
@@ -385,7 +389,7 @@ voice, crop, or notifications.
 
 ## v0.10.0 - Polish and recovery
 
-Current release. Web-first. Finish the daily-driver shell and the locked-out
+Shipped. Live on `p1`. Web-first. Finish the daily-driver shell and the locked-out
 case. Keep it solidly moderate: contracts first, freeze a Hermes mark early
 (login + favicon), then one transcript/composer pass. Markdown is inline
 `code` plus emphasis only — no lists or headings. Unsend is **sender only**;
@@ -432,6 +436,63 @@ wait).
 - Unread increments when you are in the room but scrolled up
   ([fe#57](https://github.com/ahyibrahim/hermes-fe/issues/57))
 
+## v0.11.0 - Call chrome and system hermes
+
+Current release. Web-first, with one additive backend slice. Quiet the daily
+driver chrome, give voice its own strip, and give the product a sender that
+is not a person. Keep it moderate: no roles, no screen share, no announcement
+composer.
+
+After this release a friend should: unsend and copy code without the controls
+fighting; send/attach/join/jump/notify with icons; join a call and get a
+**small drawer** (avatars, mute, leave, pick a mic) while the transcript stays
+the main view; find **Sign out** on Profile; and see **one** `#general` message
+from `hermes` for this version, with `hermes` never appearing as a peer.
+
+### Locked
+
+- Inline SVG, `aria-label` / `title`, no icon library. Form actions stay text
+  (auth, Create room). Sign out is text on Profile.
+- Join call stays in the room header. The drawer appears after join and leaves
+  with hang-up. Bar, not Discord video stage. Honor `prefers-reduced-motion`.
+- Screen capture and new call signaling wait. Drawer layout must be able to
+  grow a preview row later.
+- Reserved username `hermes`: not a login, not admin, member of `general`
+  only. Avatar is the Hermes mark (the one place the mark is an avatar).
+  One post per version, idempotent; copy in
+  `docs/announcements/v0.11.0.md`, not in `deploy.sh`. Full contract:
+  [be#60](https://github.com/ahyibrahim/hermes-be/issues/60).
+- Additive schema only. No `s1` rehearsal. Alice stays admin on `p1`.
+- CLI only where the API forces it (hide `hermes` from `/users` if it would
+  look like a peer). No CLI voice.
+
+### Chrome
+
+- Chat-shell icon buttons. Umbrella
+  [fe#60](https://github.com/ahyibrahim/hermes-fe/issues/60)
+  ([fe#61](https://github.com/ahyibrahim/hermes-fe/issues/61) unsend,
+  [fe#62](https://github.com/ahyibrahim/hermes-fe/issues/62) copy,
+  [fe#63](https://github.com/ahyibrahim/hermes-fe/issues/63) composer attach/send,
+  [fe#64](https://github.com/ahyibrahim/hermes-fe/issues/64) join call,
+  [fe#66](https://github.com/ahyibrahim/hermes-fe/issues/66) jump to latest,
+  [fe#67](https://github.com/ahyibrahim/hermes-fe/issues/67) file download,
+  [fe#72](https://github.com/ahyibrahim/hermes-fe/issues/72) notifications bell)
+- In-call drawer. Umbrella
+  [fe#68](https://github.com/ahyibrahim/hermes-fe/issues/68)
+  ([fe#69](https://github.com/ahyibrahim/hermes-fe/issues/69) drawer,
+  [fe#70](https://github.com/ahyibrahim/hermes-fe/issues/70) input device,
+  [fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71) share-ready layout,
+  [fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65) mute/leave icons)
+- Move Sign out to Profile
+  ([fe#73](https://github.com/ahyibrahim/hermes-fe/issues/73))
+
+### System sender
+
+- Seed `hermes`, no-login, idempotent v0.11.0 `#general` post
+  ([be#60](https://github.com/ahyibrahim/hermes-be/issues/60))
+- Treat `hermes` as a system identity in the UI
+  ([fe#58](https://github.com/ahyibrahim/hermes-fe/issues/58))
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -442,8 +503,13 @@ label until then.
   kick; admin-delete of others' messages. Umbrella
   [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
   ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
-  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27),
+  [be#59](https://github.com/ahyibrahim/hermes-be/issues/59),
+  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55),
+  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
+- Screen share (capture + signaling). v0.11.0 only reserved drawer layout
+  ([fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71))
 - Search, read receipts, typing indicators, reactions
