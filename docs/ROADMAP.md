@@ -460,9 +460,13 @@ child says otherwise):
   [fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71) share-ready layout).
   Mute/leave icons ([fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65))
   belong in this drawer. Join call stays in the room header (fe#64).
+- Move **Sign out** off the top bar onto Profile (text, not an icon). Header
+  account entry is the existing whoami link.
+  [fe#73](https://github.com/ahyibrahim/hermes-fe/issues/73)
 
-Keep form actions as text (auth, profile, Create room, Sign out). Screen
-capture and new call signaling wait; fe#71 is layout only.
+Keep form actions as text (auth, profile, Create room). Sign out lives on
+Profile after fe#73. Screen capture and new call signaling wait; fe#71 is
+layout only.
 
 ## Backlog (unscheduled)
 
@@ -471,6 +475,8 @@ label until then.
 
 - Chat-shell icon buttons — tracked under Current sprint; umbrella
   [fe#60](https://github.com/ahyibrahim/hermes-fe/issues/60)
+- Move Sign out to Profile —
+  [fe#73](https://github.com/ahyibrahim/hermes-fe/issues/73)
 - In-call interface (drawer, mic picker, share-ready layout) — Current sprint;
   umbrella [fe#68](https://github.com/ahyibrahim/hermes-fe/issues/68)
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
