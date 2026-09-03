@@ -73,19 +73,24 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
 | GET | `/health` | no | `{ status, service, message, version, commit }` |
 | POST | `/auth/register` | no | Rate limited. `{ username, password }`. First user is `admin`. |
 | POST | `/auth/login` | no | Rate limited. Rehashes legacy SHA256 passwords to argon2id. |
-| GET | `/rooms` | Bearer | Membership-filtered `[{ id, slug, name, type, created_at, members }]` |
+| POST | `/auth/reset` | no | Rate limited like login. `{ username, token, password }` → new session. |
+| GET | `/rooms` | Bearer | Visible membership `[{ id, slug, name, type, created_at, members, unread_count, last_message }]`. Hidden DMs omitted. |
 | POST | `/rooms` | Bearer | `{ name, members?: number[] }` → group room. Creator is always a member. |
-| POST | `/rooms/dm` | Bearer | `{ userId }` → existing or new DM. Idempotent. 400 for self-DM. |
+| POST | `/rooms/dm` | Bearer | `{ userId }` → existing or new DM. Clears hide for the caller. 400 for self-DM. |
+| POST | `/rooms/hide` | Bearer | `{ room }` DMs only. 400 on groups/`general`. Membership stays; row is hidden. |
+| POST | `/rooms/leave` | Bearer | `{ room }` groups only. 400 on a DM or `general`. |
 | GET | `/users` | Bearer | `[{ id, username, role, avatar_file_id }]` |
 | GET | `/users/me` | Bearer | Profile: `{ id, username, role, avatar_file_id }`. |
-| PATCH | `/users/me` | Bearer | `{ current_password, password }`. Keeps this token; drops the rest. |
+| PATCH | `/users/me` | Bearer | `{ color }` (409 if taken) or `{ current_password, password }`. Color fans out `user_updated`. |
+| POST | `/users/:username/password-reset` | Bearer, admin | `201 { token, expires_at }` once. Replaces any unused token. TTL 1 hour. |
 | POST | `/users/me/avatar` | Bearer | Image multipart (`png`/`jpeg`/`webp`/`gif`, 25MB). |
 | GET | `/users/:id/avatar` | Bearer | Any authenticated user. Not gated on room membership. |
 | GET | `/users/online` | Bearer | Usernames with an open WebSocket, sorted. |
 | GET | `/ice` | Bearer | `{ iceServers }` for WebRTC. From `HERMES_ICE_SERVERS` or the default STUN URL. |
 | POST | `/auth/logout` | Bearer | Deletes the current session. `{ ok: true }` |
 | GET | `/messages?room=<slug>` | Bearer | Member of that room. 403 for numeric `room`. |
-| POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Sender is the token username. |
+| POST | `/messages` | Bearer (or body `token`) | Persist + broadcast. Clears hide for members of that DM. |
+| DELETE | `/messages/:id` | Bearer | Sender-only unsend. `200` tombstone. Second delete returns the same tombstone. |
 | POST | `/files` | Bearer | Multipart: field `room` first, then file field `file`. Max 25MB. Creates a message with `file_id`. |
 | GET | `/files/:id` | Bearer | Download if you are a member of the file's room. |
 
@@ -96,7 +101,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
