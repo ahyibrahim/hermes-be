@@ -432,11 +432,36 @@ wait).
 - Unread increments when you are in the room but scrolled up
   ([fe#57](https://github.com/ahyibrahim/hermes-fe/issues/57))
 
+## Current sprint (unnumbered)
+
+v0.10.0 is the last tagged release. The next version is not named yet; issues
+stay on `backlog` until they are. This sprint is still choosing among the
+backlog clusters below. **Chat-shell icon buttons** is a new UX cluster, web
+only, no API.
+
+- Chat-shell icon buttons: replace compact chrome labels with inline SVG
+  (`aria-label` / `title`; no icon library). Move Unsend to the **left** of
+  the message so it no longer covers code-block Copy. Umbrella
+  [fe#60](https://github.com/ahyibrahim/hermes-fe/issues/60)
+  ([fe#61](https://github.com/ahyibrahim/hermes-fe/issues/61) unsend,
+  [fe#62](https://github.com/ahyibrahim/hermes-fe/issues/62) copy,
+  [fe#63](https://github.com/ahyibrahim/hermes-fe/issues/63) composer attach/send,
+  [fe#64](https://github.com/ahyibrahim/hermes-fe/issues/64) join call,
+  [fe#65](https://github.com/ahyibrahim/hermes-fe/issues/65) call-bar mute/leave,
+  [fe#66](https://github.com/ahyibrahim/hermes-fe/issues/66) jump to latest,
+  [fe#67](https://github.com/ahyibrahim/hermes-fe/issues/67) file download)
+
+Keep form actions as text (auth, profile, Create room, Sign out, Enable
+notifications). Expand call-bar UX on fe#65 rather than inventing a second
+voice theme.
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
+- Chat-shell icon buttons — tracked under Current sprint; umbrella
+  [fe#60](https://github.com/ahyibrahim/hermes-fe/issues/60)
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
   last admin); delete a group (creator or admin; hard-delete; confirm UI);
   kick; admin-delete of others' messages. Umbrella
