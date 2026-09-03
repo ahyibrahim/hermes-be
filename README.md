@@ -101,7 +101,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
@@ -225,7 +225,7 @@ journalctl -u hermes-be@p1 -f
 
 ## Roadmap
 
-[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.10.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
+[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.11.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
 
 ## Out of scope for now
 

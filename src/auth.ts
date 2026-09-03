@@ -4,6 +4,7 @@ import { getDb } from './database';
 import { createSession, deleteOtherSessions } from './sessions';
 import { isoTimestamp, USER_COLOR_PALETTE, type UserColor } from './colors';
 import { takenColors } from './rooms';
+import { isSystemUsername, SYSTEM_USERNAME } from './system-user';
 
 export type UserRole = 'member' | 'admin';
 
@@ -13,6 +14,7 @@ export interface AuthUser {
   role: UserRole;
   avatar_file_id: number | null;
   color: string | null;
+  system: boolean;
 }
 
 export interface AuthSession {
@@ -56,7 +58,9 @@ function nextColor(): UserColor {
 }
 
 function nextRole(): UserRole {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS n FROM users WHERE COALESCE(system, 0) = 0')
+    .get() as { n: number };
   return row.n === 0 ? 'admin' : 'member';
 }
 
@@ -64,6 +68,9 @@ export async function registerUser(username: string, password: string): Promise<
   const normalizedUsername = username.trim().toLowerCase();
   if (!normalizedUsername || !password.trim()) {
     throw new Error('username and password are required');
+  }
+  if (isSystemUsername(normalizedUsername)) {
+    throw new Error('username is reserved');
   }
 
   const role = nextRole();
@@ -92,17 +99,18 @@ export async function registerUser(username: string, password: string): Promise<
     role,
     avatar_file_id: null,
     color,
+    system: false,
   };
 }
 
 export async function loginUser(username: string, password: string): Promise<AuthSession | null> {
   const normalizedUsername = username.trim().toLowerCase();
-  const stmt = getDb().prepare('SELECT id, username, password FROM users WHERE username = ?');
+  const stmt = getDb().prepare('SELECT id, username, password, system FROM users WHERE username = ?');
   const user = stmt.get(normalizedUsername) as
-    | { id: number; username: string; password: string }
+    | { id: number; username: string; password: string; system: number }
     | undefined;
 
-  if (!user || !(await passwordMatches(user.password, password))) {
+  if (!user || user.system || !(await passwordMatches(user.password, password))) {
     return null;
   }
 
@@ -121,9 +129,29 @@ export async function loginUser(username: string, password: string): Promise<Aut
 }
 
 export function getProfile(username: string): AuthUser | undefined {
-  return getDb()
-    .prepare('SELECT id, username, role, avatar_file_id, color FROM users WHERE username = ?')
-    .get(username) as AuthUser | undefined;
+  const row = getDb()
+    .prepare('SELECT id, username, role, avatar_file_id, color, system FROM users WHERE username = ?')
+    .get(username) as
+    | {
+        id: number;
+        username: string;
+        role: UserRole;
+        avatar_file_id: number | null;
+        color: string | null;
+        system: number;
+      }
+    | undefined;
+  if (!row) {
+    return undefined;
+  }
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    avatar_file_id: row.avatar_file_id,
+    color: row.color,
+    system: Number(row.system) === 1,
+  };
 }
 
 export async function changePassword(
@@ -163,7 +191,7 @@ export function issuePasswordReset(
 ): { token: string; expires_at: string } | { error: 'not_found' } {
   const normalizedUsername = username.trim().toLowerCase();
   const user = getProfile(normalizedUsername);
-  if (!user) {
+  if (!user || user.system || user.username === SYSTEM_USERNAME) {
     return { error: 'not_found' };
   }
 
@@ -194,6 +222,11 @@ export async function redeemPasswordReset(
   }
 
   const normalizedUsername = username.trim().toLowerCase();
+  const profile = getProfile(normalizedUsername);
+  if (!profile || profile.system) {
+    return null;
+  }
+
   const row = getDb()
     .prepare('SELECT token_hash, expires_at FROM password_reset_tokens WHERE username = ?')
     .get(normalizedUsername) as { token_hash: string; expires_at: string } | undefined;
