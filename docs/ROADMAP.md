@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.11.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.12.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -29,7 +29,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.8.0 - Voice chat (live on `p1`; HTTPS via Tailscale Serve)
 - [x] v0.9.0 - Daily-driver UX (live on `p1`)
 - [x] v0.10.0 - Polish and recovery (live on `p1`)
-- [ ] v0.11.0 - Call chrome and system hermes (current)
+- [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
+- [ ] v0.12.0 - Group membership (current)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -116,7 +117,8 @@ graph LR
   v07 --> v08
   v08 --> v09[v0.9.0 Daily-driver UX — shipped]
   v09 --> v10[v0.10.0 Polish and recovery — shipped]
-  v10 --> v11[v0.11.0 Call chrome and system hermes]
+  v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
+  v11 --> v12[v0.12.0 Group membership]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -134,9 +136,11 @@ both a UI and the hardened auth. Daily-driver UX follows voice because the
 shell is now the product. v0.10.0 is a second pass on that shell (recovery,
 hide-not-leave DMs, unsend, leftover QoL) rather than roles. v0.11.0 is a
 chrome pass plus the first system voice: quieter header controls, a call
-drawer, and one idempotent `#general` post from reserved `hermes`. Promote/demote,
-delete-group, and kick stay backlog until we want `users.role` to be more
-than a label.
+drawer, and one idempotent `#general` post from reserved `hermes`. v0.12.0
+is the remaining daily-driver hole: a group you create is creator-only, so
+messages never meet. Invite and a who-can-see stack ship without turning
+`users.role` into powers. Promote/demote, delete-group, and kick stay
+backlog. Screen share still waits; v0.11.0 only reserved drawer layout.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -438,7 +442,7 @@ wait).
 
 ## v0.11.0 - Call chrome and system hermes
 
-Current release. Web-first, with one additive backend slice. Quiet the daily
+Shipped. Live on `p1`. Web-first, with one additive backend slice. Quiet the daily
 driver chrome, give voice its own strip, and give the product a sender that
 is not a person. Keep it moderate: no roles, no screen share, no announcement
 composer.
@@ -493,6 +497,59 @@ from `hermes` for this version, with `hermes` never appearing as a peer.
 - Treat `hermes` as a system identity in the UI
   ([fe#58](https://github.com/ahyibrahim/hermes-fe/issues/58))
 
+## v0.12.0 - Group membership
+
+Current release. Web-first, with one additive backend slice. Rooms already
+exist; people cannot get into them after create. The Create field sends no
+`members`, there is no add-later API, and the header does not show who can
+read the transcript. Keep it moderate: invite and a member stack only. No
+promote/demote, no kick, no delete-group, no admin-delete, no screen share.
+
+After this release a friend should: pick people when creating a group; add
+someone later from the header; see overlapping avatars for who is in the
+room (including `general`); and have that room appear on the invitee's
+Rooms rail without a refresh. `hermes` stays out of the picker.
+
+### Locked
+
+- Any **current member** may add. Kick and delete wait on
+  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43). Do not invent a
+  second permission story.
+- Groups only. Not DMs (`POST /rooms/dm` is get-or-create). Not `general`
+  (everyone is already in it). System user `hermes` is never added and never
+  offered in the picker.
+- Add is idempotent for people already in the room. Unknown ids or system
+  users reject the **whole** request with 404/400 — no silent partial add.
+- `GET /rooms` `members` is membership (who can see), not presence. Presence
+  stays `/users/online` and the people rail. Today's union with connected
+  sockets is a lie for the stack; fix it here.
+- Fan out so the invitee and existing members update without a refresh
+  (`member_added` / `room_updated`, or equivalent). The new member must see
+  the room on `GET /rooms` immediately.
+- Header stack: overlapping avatars, cap about five then `+N`, hover cards.
+  Groups including `general`. Not DMs. Create stays a text form; the add
+  control may be an icon to match v0.11.0 chrome.
+- `POST /rooms` `members` stays as-is. No public directory, no join-by-name.
+- Additive schema only (`INSERT` into `room_members`). No `s1` rehearsal.
+  Alice stays admin on `p1`.
+- CLI only where the API forces it (`createRoom` already takes member ids;
+  add a core helper for add-later). No CLI picker.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.12.0.md`. Bump `package.json` version when the
+  release is ready to deploy, not in the first implementation PR.
+
+### Contracts
+
+- Add members to an existing group
+  ([be#59](https://github.com/ahyibrahim/hermes-be/issues/59))
+- Invite picker on create and on an existing group
+  ([fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55))
+
+### Shell
+
+- Who can see this group: avatar stack in the header
+  ([fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -500,13 +557,11 @@ label until then.
 
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
   last admin); delete a group (creator or admin; hard-delete; confirm UI);
-  kick; admin-delete of others' messages. Umbrella
+  kick; admin-delete of others' messages. Invite and the member stack moved
+  to v0.12.0. Umbrella
   [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
   ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
-  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27),
-  [be#59](https://github.com/ahyibrahim/hermes-be/issues/59),
-  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55),
-  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
