@@ -30,7 +30,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.9.0 - Daily-driver UX (live on `p1`)
 - [x] v0.10.0 - Polish and recovery (live on `p1`)
 - [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
-- [ ] v0.12.0 - Invite, phone shell, and cues (current)
+- [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -118,7 +118,7 @@ graph LR
   v08 --> v09[v0.9.0 Daily-driver UX — shipped]
   v09 --> v10[v0.10.0 Polish and recovery — shipped]
   v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
-  v11 --> v12[v0.12.0 Invite, phone shell, and cues]
+  v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -500,7 +500,7 @@ from `hermes` for this version, with `hermes` never appearing as a peer.
 
 ## v0.12.0 - Invite, phone shell, and cues
 
-Current release. Web-first. No new backend endpoint and no schema change.
+Shipped. Live on `p1`. Web-first. No new backend endpoint and no schema change.
 `POST /rooms` already takes `members`; the Create field does not send them.
 The shell is a 48rem three-column grid. Icon buttons from v0.11.0 are a
 hair off. The app is silent. Keep it moderate: create-time invite, phone
@@ -585,6 +585,9 @@ label until then.
   ([fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85)
   ([fe#86](https://github.com/ahyibrahim/hermes-fe/issues/86),
   [fe#87](https://github.com/ahyibrahim/hermes-fe/issues/87)))
+- App settings menu
+  ([fe#88](https://github.com/ahyibrahim/hermes-fe/issues/88)
+  ([fe#89](https://github.com/ahyibrahim/hermes-fe/issues/89)))
 - More markdown (autolink, lists, strike). v0.10 locked inline `code` plus
   emphasis; URLs stay text until this is scheduled
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
