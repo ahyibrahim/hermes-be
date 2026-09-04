@@ -101,7 +101,7 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
 }
 ```
