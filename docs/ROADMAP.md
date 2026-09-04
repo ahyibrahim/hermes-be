@@ -549,10 +549,9 @@ fire). Bob may need a reload to see a group Alice just created.
   notify rules and one mute,
   [fe#84](https://github.com/ahyibrahim/hermes-fe/issues/84) CC0 pack).
   Call cues are local-only. Playback names stay stable for a later pack
-  swap. Starter Kenney Interface Sounds map (variant `_002`, change the
-  number not the family): send `confirmation_002`, receive `pluck_002`,
-  join `maximize_002`, leave `minimize_002`, mute `switch_002`, unmute
-  `toggle_002`. Confirm by ear at implement time.
+  swap. Starter Kenney Interface Sounds map: send `maximize_003`,
+  receive `pluck_002`, join `maximize_002`, leave `minimize_002`, mute
+  `switch_002`, unmute `toggle_002`. Confirm by ear at implement time.
 - One idempotent `#general` post from `hermes`; copy in
   `docs/announcements/v0.12.0.md`. Bump `package.json` version when the
   release is ready to deploy, not in the first implementation PR.
