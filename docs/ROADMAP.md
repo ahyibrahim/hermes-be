@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.11.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.12.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -29,7 +29,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.8.0 - Voice chat (live on `p1`; HTTPS via Tailscale Serve)
 - [x] v0.9.0 - Daily-driver UX (live on `p1`)
 - [x] v0.10.0 - Polish and recovery (live on `p1`)
-- [ ] v0.11.0 - Call chrome and system hermes (current)
+- [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
+- [ ] v0.12.0 - Invite, phone shell, and cues (current)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -116,7 +117,8 @@ graph LR
   v07 --> v08
   v08 --> v09[v0.9.0 Daily-driver UX — shipped]
   v09 --> v10[v0.10.0 Polish and recovery — shipped]
-  v10 --> v11[v0.11.0 Call chrome and system hermes]
+  v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
+  v11 --> v12[v0.12.0 Invite, phone shell, and cues]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -134,9 +136,12 @@ both a UI and the hardened auth. Daily-driver UX follows voice because the
 shell is now the product. v0.10.0 is a second pass on that shell (recovery,
 hide-not-leave DMs, unsend, leftover QoL) rather than roles. v0.11.0 is a
 chrome pass plus the first system voice: quieter header controls, a call
-drawer, and one idempotent `#general` post from reserved `hermes`. Promote/demote,
-delete-group, and kick stay backlog until we want `users.role` to be more
-than a label.
+drawer, and one idempotent `#general` post from reserved `hermes`. v0.12.0
+fixes the creator-only group hole **at create time**, then spends the rest
+on the shell: phone-width rails, icon centering, and borrowed CC0 cues.
+Add-later, the member stack, live fan-out, original audio, and more
+markdown stay backlog. Promote/demote, delete-group, and kick stay backlog.
+Screen share still waits; v0.11.0 only reserved drawer layout.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -438,7 +443,7 @@ wait).
 
 ## v0.11.0 - Call chrome and system hermes
 
-Current release. Web-first, with one additive backend slice. Quiet the daily
+Shipped. Live on `p1`. Web-first, with one additive backend slice. Quiet the daily
 driver chrome, give voice its own strip, and give the product a sender that
 is not a person. Keep it moderate: no roles, no screen share, no announcement
 composer.
@@ -493,20 +498,102 @@ from `hermes` for this version, with `hermes` never appearing as a peer.
 - Treat `hermes` as a system identity in the UI
   ([fe#58](https://github.com/ahyibrahim/hermes-fe/issues/58))
 
+## v0.12.0 - Invite, phone shell, and cues
+
+Current release. Web-first. No new backend endpoint and no schema change.
+`POST /rooms` already takes `members`; the Create field does not send them.
+The shell is a 48rem three-column grid. Icon buttons from v0.11.0 are a
+hair off. The app is silent. Keep it moderate: create-time invite, phone
+width, icon sweep, borrowed CC0 cues. No add-later, no member stack, no
+live fan-out, no original audio, no extra markdown, no roles, no screen
+share.
+
+After this release a friend should: pick people when creating a group
+(`hermes` stays out of the picker); use the chat on a phone-width screen
+with rails default-collapsed and at most one open; see Send and the other
+icon buttons lined up; hear short cues on send, an unread receive, join,
+leave, mute, and unmute (receive only when a desktop notification would
+fire). Bob may need a reload to see a group Alice just created.
+
+### Locked
+
+- **Invite is create-time only.** `session.createRoom(name, ids)` already
+  exists. No `POST /rooms/:slug/members`, no header add, no WS
+  `member_added`. Slim
+  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55) (picker on
+  New room). Leave add-later on
+  [be#59](https://github.com/ahyibrahim/hermes-be/issues/59).
+- Groups only. Not DMs. Not `general`. System user `hermes` is never
+  offered. No public directory, no join-by-name.
+- Create stays a text name field plus picker. No `s1`. Alice stays admin
+  on `p1`. CLI unchanged (it can already pass member ids).
+- **Phone width.** Umbrella
+  [fe#76](https://github.com/ahyibrahim/hermes-fe/issues/76)
+  ([fe#77](https://github.com/ahyibrahim/hermes-fe/issues/77) drop
+  `min-width: 48rem`,
+  [fe#78](https://github.com/ahyibrahim/hermes-fe/issues/78) both rails
+  default collapsed,
+  [fe#79](https://github.com/ahyibrahim/hermes-fe/issues/79) at most one
+  rail expanded). Breakpoint is that 48rem floor. Reuse existing toggles.
+  Desktop prefs and two-open rails stay. Do not write the phone accordion
+  into desktop `localStorage`. Width only: not a PWA, not keyboard/hover
+  work, not a voice rewrite.
+- **Icon centering.**
+  [fe#80](https://github.com/ahyibrahim/hermes-fe/issues/80). Composer
+  Attach/Send vs a single-line field; optically center `IconGlyph`
+  (send first); sweep other v0.11.0 hits. Not a restyle.
+- **Cues.** Umbrella
+  [fe#81](https://github.com/ahyibrahim/hermes-fe/issues/81)
+  ([fe#82](https://github.com/ahyibrahim/hermes-fe/issues/82) six events,
+  [fe#83](https://github.com/ahyibrahim/hermes-fe/issues/83) receive =
+  notify rules and one mute,
+  [fe#84](https://github.com/ahyibrahim/hermes-fe/issues/84) CC0 pack).
+  Call cues are local-only. Playback names stay stable for a later pack
+  swap. Starter Kenney Interface Sounds map (variant `_002`, change the
+  number not the family): send `confirmation_002`, receive `pluck_002`,
+  join `maximize_002`, leave `minimize_002`, mute `switch_002`, unmute
+  `toggle_002`. Confirm by ear at implement time.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.12.0.md`. Bump `package.json` version when the
+  release is ready to deploy, not in the first implementation PR.
+
+### Invite
+
+- People picker on create
+  ([fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55), create
+  path only)
+
+### Shell
+
+- Phone-width chat
+  ([fe#76](https://github.com/ahyibrahim/hermes-fe/issues/76))
+- Center icon buttons
+  ([fe#80](https://github.com/ahyibrahim/hermes-fe/issues/80))
+- Borrowed CC0 sound cues
+  ([fe#81](https://github.com/ahyibrahim/hermes-fe/issues/81))
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
+- Add members after create, live fan-out, who-can-see stack
+  ([be#59](https://github.com/ahyibrahim/hermes-be/issues/59),
+  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55) add-later
+  half,
+  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
+- Original Hermes sound pack
+  ([fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85)
+  ([fe#86](https://github.com/ahyibrahim/hermes-fe/issues/86),
+  [fe#87](https://github.com/ahyibrahim/hermes-fe/issues/87)))
+- More markdown (autolink, lists, strike). v0.10 locked inline `code` plus
+  emphasis; URLs stay text until this is scheduled
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
   last admin); delete a group (creator or admin; hard-delete; confirm UI);
   kick; admin-delete of others' messages. Umbrella
   [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
   ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
-  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27),
-  [be#59](https://github.com/ahyibrahim/hermes-be/issues/59),
-  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55),
-  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
