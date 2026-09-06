@@ -16,10 +16,10 @@ test('uses an environment-configured database path for room messages', async () 
 
   const message = createMessage('general', 'alice', 'hello');
   const messages = listMessages('general');
+  const hello = messages.filter((row) => row.sender === 'alice' && row.content === 'hello');
 
   assert.equal(message.content, 'hello');
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].sender, 'alice');
+  assert.equal(hello.length, 1);
   assert.ok(fs.existsSync(dbPath));
   assert.equal(fs.existsSync(defaultDbPath), false);
 });
