@@ -247,6 +247,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   const roomClients = new Map<string, Set<RoomSocket>>();
   const userSockets = new Map<string, Set<TrackedSocket>>();
   const callMembers = new Map<string, Set<string>>();
+  const callSharing = new Map<string, string>();
   const lastPong = new WeakMap<object, number>();
 
   getDb({
@@ -350,6 +351,18 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return [...members].sort((a, b) => a.localeCompare(b));
   }
 
+  function callSharingUser(room: string): string | null {
+    return callSharing.get(room) ?? null;
+  }
+
+  function releaseShare(room: string, username: string): void {
+    if (callSharing.get(room) !== username) {
+      return;
+    }
+    callSharing.delete(room);
+    broadcastCall(room, { type: 'screen_share_stopped', room, user: username });
+  }
+
   function broadcastCall(room: string, payload: unknown, exceptUser?: string): void {
     const members = callMembers.get(room);
     if (!members) {
@@ -371,8 +384,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
 
     members.delete(username);
+    releaseShare(room, username);
     if (members.size === 0) {
       callMembers.delete(room);
+      callSharing.delete(room);
     }
 
     broadcastCall(room, { type: 'user_left_call', room, user: username });
@@ -1294,7 +1309,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
             const starting = (callMembers.get(slug)?.size ?? 0) === 0;
             callMembers.get(slug)?.add(user);
 
-            sendJson(socket, { type: 'call_peers', room: slug, users: callRoster(slug) });
+            sendJson(socket, {
+              type: 'call_peers',
+              room: slug,
+              users: callRoster(slug),
+              sharing: callSharingUser(slug),
+            });
             if (!already) {
               if (starting) {
                 broadcastToMembers(slug, { type: 'call_started', room: slug, user }, user);
@@ -1302,6 +1322,66 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               broadcastCall(slug, { type: 'user_joined_call', room: slug, user }, user);
               request.log.info({ event: 'call_join', user, room: slug }, 'joined call');
             }
+            return;
+          }
+
+          if (payload.type === 'screen_share_start') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const slug = normalizeRoomSlug(payload.room);
+            if (!slug) {
+              sendJson(socket, errorFrame('room must be a slug, not a numeric id'));
+              return;
+            }
+
+            const members = callMembers.get(slug);
+            if (!members?.has(user)) {
+              sendJson(socket, errorFrame('not in that call'));
+              return;
+            }
+
+            const current = callSharingUser(slug);
+            if (current && current !== user) {
+              sendJson(socket, errorFrame(`${current} is sharing`));
+              return;
+            }
+
+            if (current === user) {
+              return;
+            }
+
+            callSharing.set(slug, user);
+            broadcastCall(slug, { type: 'screen_share_started', room: slug, user });
+            request.log.info({ event: 'screen_share_start', user, room: slug }, 'started screen share');
+            return;
+          }
+
+          if (payload.type === 'screen_share_stop') {
+            if (!requireUser()) {
+              return;
+            }
+
+            const slug = normalizeRoomSlug(payload.room);
+            if (!slug) {
+              sendJson(socket, errorFrame('room must be a slug, not a numeric id'));
+              return;
+            }
+
+            const members = callMembers.get(slug);
+            if (!members?.has(user)) {
+              sendJson(socket, errorFrame('not in that call'));
+              return;
+            }
+
+            if (callSharingUser(slug) !== user) {
+              sendJson(socket, errorFrame('only the sharer can stop'));
+              return;
+            }
+
+            releaseShare(slug, user);
+            request.log.info({ event: 'screen_share_stop', user, room: slug }, 'stopped screen share');
             return;
           }
 

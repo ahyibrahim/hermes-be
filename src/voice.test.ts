@@ -15,6 +15,7 @@ type JsonFrame = {
   room?: string;
   user?: string;
   users?: string[];
+  sharing?: string | null;
   from?: string;
   to?: string;
   sdp?: unknown;
@@ -134,6 +135,7 @@ test('voice signaling: ICE auth, offer reaches only the target, disconnect clear
     const alicePeers = await a.readFrame();
     assert.equal(alicePeers.type, 'call_peers');
     assert.deepEqual(alicePeers.users, ['alice']);
+    assert.equal(alicePeers.sharing, null);
     const bobStarted = await b.readFrame();
     const carolStarted = await c.readFrame();
     assert.equal(bobStarted.type, 'call_started');
@@ -232,6 +234,172 @@ test('voice signaling: ICE auth, offer reaches only the target, disconnect clear
     b.socket.close();
     c.socket.close();
     o.socket.close();
+  } finally {
+    await app.close();
+  }
+});
+
+test('screen share: one slot, no spoof, leave clears, room members stay dark', async () => {
+  const shareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-share-'));
+  process.env.HERMES_DB_PATH = path.join(shareDir, 'hermes.db');
+  process.env.HERMES_FILES_DIR = path.join(shareDir, 'files');
+  const { closeDb } = await import('./database');
+  closeDb();
+  const { createApp } = await import('./app');
+  const { app } = await createApp();
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const port = (app.server.address() as AddressInfo).port;
+  const origin = `http://127.0.0.1:${port}`;
+
+  async function waitUntilOpen(socket: WebSocket): Promise<void> {
+    if (socket.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', () => resolve());
+      socket.once('error', (error) => reject(error));
+      socket.once('unexpected-response', (_req, res) => {
+        reject(new Error(`unexpected response ${res.statusCode}`));
+      });
+    });
+  }
+
+  async function registerAndLogin(username: string, password = 'hunter2') {
+    const register = await fetch(`${origin}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    assert.equal(register.status, 200);
+
+    const login = await fetch(`${origin}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const body = (await login.json()) as { token: string; username: string };
+    assert.ok(body.token);
+    return body;
+  }
+
+  async function connectAuthed(token: string) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`);
+    const inbox: JsonFrame[] = [];
+    const waiters: Array<(frame: JsonFrame) => void> = [];
+
+    socket.on('message', (data) => {
+      const frame = JSON.parse(data.toString()) as JsonFrame;
+      const waiter = waiters.shift();
+      if (waiter) {
+        waiter(frame);
+      } else {
+        inbox.push(frame);
+      }
+    });
+
+    const readFrame = (timeoutMs = 1000) =>
+      new Promise<JsonFrame>((resolve, reject) => {
+        const queued = inbox.shift();
+        if (queued) {
+          resolve(queued);
+          return;
+        }
+
+        const timer = setTimeout(() => reject(new Error('timed out waiting for websocket frame')), timeoutMs);
+        waiters.push((frame) => {
+          clearTimeout(timer);
+          resolve(frame);
+        });
+      });
+
+    const drain = () => inbox.splice(0);
+
+    await waitUntilOpen(socket);
+    const connected = await readFrame();
+    return { socket, connected, readFrame, drain };
+  }
+
+  try {
+    const alice = await registerAndLogin('alice');
+    const bob = await registerAndLogin('bob');
+    const carol = await registerAndLogin('carol');
+
+    const a = await connectAuthed(alice.token);
+    const b = await connectAuthed(bob.token);
+    const c = await connectAuthed(carol.token);
+
+    a.socket.send(JSON.stringify({ type: 'join_call', room: 'general' }));
+    assert.equal((await a.readFrame()).type, 'call_peers');
+    assert.equal((await b.readFrame()).type, 'call_started');
+    assert.equal((await c.readFrame()).type, 'call_started');
+
+    b.socket.send(JSON.stringify({ type: 'join_call', room: 'general' }));
+    const bobPeers = await b.readFrame();
+    assert.equal(bobPeers.type, 'call_peers');
+    assert.equal(bobPeers.sharing, null);
+    assert.equal((await a.readFrame()).type, 'user_joined_call');
+
+    c.socket.send(JSON.stringify({ type: 'screen_share_start', room: 'general' }));
+    const carolDenied = await c.readFrame();
+    assert.equal(carolDenied.type, 'error');
+    assert.match(carolDenied.content ?? '', /not in that call/i);
+
+    a.socket.send(JSON.stringify({ type: 'screen_share_start', room: 'general', user: 'bob' }));
+    const aliceStarted = await a.readFrame();
+    const bobStarted = await b.readFrame();
+    assert.equal(aliceStarted.type, 'screen_share_started');
+    assert.equal(aliceStarted.user, 'alice');
+    assert.equal(bobStarted.type, 'screen_share_started');
+    assert.equal(bobStarted.user, 'alice');
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.deepEqual(c.drain(), [], 'carol must not see share metadata while out of the call');
+
+    b.socket.send(JSON.stringify({ type: 'screen_share_start', room: 'general' }));
+    const bobBlocked = await b.readFrame();
+    assert.equal(bobBlocked.type, 'error');
+    assert.match(bobBlocked.content ?? '', /alice is sharing/i);
+
+    b.socket.send(JSON.stringify({ type: 'screen_share_stop', room: 'general' }));
+    const bobStopDenied = await b.readFrame();
+    assert.equal(bobStopDenied.type, 'error');
+    assert.match(bobStopDenied.content ?? '', /only the sharer/i);
+
+    c.socket.send(JSON.stringify({ type: 'join_call', room: 'general' }));
+    const carolPeers = await c.readFrame();
+    assert.equal(carolPeers.type, 'call_peers');
+    assert.equal(carolPeers.sharing, 'alice');
+    assert.equal((await a.readFrame()).type, 'user_joined_call');
+    assert.equal((await b.readFrame()).type, 'user_joined_call');
+
+    a.socket.send(JSON.stringify({ type: 'screen_share_stop', room: 'general' }));
+    const aliceStopped = await a.readFrame();
+    const bobStopped = await b.readFrame();
+    const carolStopped = await c.readFrame();
+    assert.equal(aliceStopped.type, 'screen_share_stopped');
+    assert.equal(aliceStopped.user, 'alice');
+    assert.equal(bobStopped.type, 'screen_share_stopped');
+    assert.equal(carolStopped.type, 'screen_share_stopped');
+
+    a.socket.send(JSON.stringify({ type: 'screen_share_start', room: 'general' }));
+    assert.equal((await a.readFrame()).type, 'screen_share_started');
+    assert.equal((await b.readFrame()).type, 'screen_share_started');
+    assert.equal((await c.readFrame()).type, 'screen_share_started');
+
+    a.socket.close();
+    assert.equal((await b.readFrame()).type, 'screen_share_stopped');
+    assert.equal((await c.readFrame()).type, 'screen_share_stopped');
+    assert.equal((await b.readFrame()).type, 'user_left_call');
+    assert.equal((await c.readFrame()).type, 'user_left_call');
+
+    b.socket.send(JSON.stringify({ type: 'join_call', room: 'general' }));
+    const bobAgain = await b.readFrame();
+    assert.equal(bobAgain.type, 'call_peers');
+    assert.equal(bobAgain.sharing, null);
+
+    b.socket.close();
+    c.socket.close();
   } finally {
     await app.close();
   }

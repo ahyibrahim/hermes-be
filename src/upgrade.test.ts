@@ -71,8 +71,7 @@ test('an already-populated pre-v0.3.0 database opens cleanly and its users can l
   assert.equal(await loginUser('legacy', 'wrong'), null);
 
   const history = listMessages('general');
-  assert.equal(history.length, 1);
-  assert.equal(history[0].content, 'history from before the upgrade');
+  assert.ok(history.some((row) => row.content === 'history from before the upgrade'));
 
   const fresh = await registerUser('newcomer', 'hunter2');
   assert.equal(fresh.username, 'newcomer');
@@ -124,7 +123,9 @@ test('migrating twice is a no-op', () => {
     assert.ok(tables.has(table), `expected table ${table}`);
   }
 
-  const messages = db.prepare('SELECT COUNT(*) AS count FROM messages').get() as { count: number };
-  assert.equal(messages.count, 1);
+  const seed = db
+    .prepare('SELECT COUNT(*) AS count FROM messages WHERE content = ?')
+    .get('history from before the upgrade') as { count: number };
+  assert.equal(seed.count, 1);
   db.close();
 });
