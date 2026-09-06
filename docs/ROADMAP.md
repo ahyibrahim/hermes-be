@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.12.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.13.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -31,6 +31,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.10.0 - Polish and recovery (live on `p1`)
 - [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
+- [ ] v0.13.0 - Screen share
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -119,6 +120,7 @@ graph LR
   v09 --> v10[v0.10.0 Polish and recovery — shipped]
   v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
+  v12 --> v13[v0.13.0 Screen share]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -141,7 +143,8 @@ fixes the creator-only group hole **at create time**, then spends the rest
 on the shell: phone-width rails, icon centering, and borrowed CC0 cues.
 Add-later, the member stack, live fan-out, original audio, and more
 markdown stay backlog. Promote/demote, delete-group, and kick stay backlog.
-Screen share still waits; v0.11.0 only reserved drawer layout.
+v0.13.0 is the screen-share pass v0.11.0 reserved layout for: one sharer,
+in-call only, existing P2P mesh. Camera video waits.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -571,6 +574,66 @@ fire). Bob may need a reload to see a group Alice just created.
 - Borrowed CC0 sound cues
   ([fe#81](https://github.com/ahyibrahim/hermes-fe/issues/81))
 
+## v0.13.0 - Screen share
+
+Web-first. One additive signaling slice, no schema. Voice already meshes
+over `/ws`; the drawer reserved an empty preview row in v0.11.0
+([fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71)). This release
+fills that row. Keep it moderate: one sharer at a time, screen only, still
+in the call. No camera, no SFU, no TURN, no system audio, no CLI capture,
+no who-may-share roles.
+
+After this release a friend should: join a call, share one screen or
+window or tab, see a preview in the drawer, click it to enlarge, and stop
+from the drawer or the browser bar. A second Share is blocked while
+someone else holds the slot. A late joiner sees who is sharing. Receiving
+on a phone-width screen works; presenting from a phone may not.
+
+### Locked
+
+- **In-call only.** Share is a call action. Same rooms as voice (groups
+  and DMs). Anyone in the call may share. Leave, Stop, or the browser
+  Stop chrome all clear the slot.
+- **One sharer.** Server-authoritative `callSharing` next to
+  `callMembers`. Second start is rejected, not a silent replace.
+- **Reuse the mesh.** `getDisplayMedia` + `addTrack` + existing
+  `onnegotiationneeded`. Do not stand up a second mesh. Media stays
+  peer-to-peer. Split `ontrack`: audio stays on `<audio>`, video goes to
+  the preview `<video>`.
+- **Share state on `/ws`.**
+  [be#67](https://github.com/ahyibrahim/hermes-be/issues/67). Client
+  `screen_share_start` / `screen_share_stop`. Server
+  `screen_share_started` / `screen_share_stopped`. `call_peers` grows
+  `{ users, sharing }`. Identity from the session token. Fan-out with
+  `broadcastCall`, not `broadcastToMembers`. Log `{ event, user, room }`
+  only — never SDP, ICE, or track labels.
+- **Drawer, not a video stage.** Umbrella
+  [fe#91](https://github.com/ahyibrahim/hermes-fe/issues/91). Grow the
+  reserved `.call-preview` row while someone is sharing. Click to a
+  simple fullscreen overlay; Esc / click-out closes it. Honor
+  `prefers-reduced-motion`. Phone-width transcript stays usable.
+- **No system audio.** Browser picker chooses the surface. Modest
+  sender cap (720p / ~2 Mbps) is courtesy, not a boundary.
+- Web only. CLI voice and capture stay out. No `s1`. Alice stays admin
+  on `p1`. Additive in-memory map only.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.13.0.md`. Bump `package.json` version when the
+  release is ready to deploy, not in the first implementation PR.
+
+### Signaling
+
+- Share-state over `/ws`
+  ([be#67](https://github.com/ahyibrahim/hermes-be/issues/67))
+
+### Web
+
+- Screen share in the web call. Umbrella
+  [fe#91](https://github.com/ahyibrahim/hermes-fe/issues/91)
+  ([fe#92](https://github.com/ahyibrahim/hermes-fe/issues/92) core
+  frames,
+  [fe#93](https://github.com/ahyibrahim/hermes-fe/issues/93) VoiceMesh,
+  [fe#94](https://github.com/ahyibrahim/hermes-fe/issues/94) CallBar)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -599,6 +662,6 @@ label until then.
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
-- Screen share (capture + signaling). v0.11.0 only reserved drawer layout
-  ([fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71))
+- Camera video in the call drawer. Same mesh as v0.13.0 screen share;
+  different UI (always-on tiles vs opt-in preview)
 - Search, read receipts, typing indicators, reactions

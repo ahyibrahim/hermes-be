@@ -54,7 +54,7 @@ npm run build
 
 ## Current status
 
-Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history. Per-room voice calls are signaled over `/ws` (`join_call`, SDP, ICE); media is peer-to-peer. `GET /ice` returns STUN servers. When `HERMES_WEB_DIR` is set to an existing directory, this same process also serves the web UI so REST, `/ws`, and the SPA share one origin.
+Live room chat works for two authenticated clients without rejoining. `POST /messages` persists and broadcasts to sockets currently joined to that room slug. File upload/download is supported. Presence is based on connected sockets, not message history. Per-room voice calls are signaled over `/ws` (`join_call`, SDP, ICE); one in-call screen share is signaled the same way (`screen_share_start` / `stop`). Media is peer-to-peer. `GET /ice` returns STUN servers. When `HERMES_WEB_DIR` is set to an existing directory, this same process also serves the web UI so REST, `/ws`, and the SPA share one origin.
 
 ## Auth
 
@@ -165,11 +165,13 @@ The connection stays open after 101 until the client closes it or auth fails. Do
 
 `send_message` does **not** insert a row. Persist with `POST /messages` only. The CLI currently POSTs and then sends `send_message`; the second call is ignored so history is not duplicated.
 
-Call membership is independent of `join_room`. `join_call` / `leave_call` require an existing room membership and route signaling by username on the open socket. Offers, answers, and ICE candidates are relayed only to `to` (who must be in that call). Audio never traverses the server.
+Call membership is independent of `join_room`. `join_call` / `leave_call` require an existing room membership and route signaling by username on the open socket. Offers, answers, and ICE candidates are relayed only to `to` (who must be in that call). Media never traverses the server. Screen share is one-at-a-time: start and stop are in-call only, identity comes from the token, and share events go to call members, not the whole room.
 
 ```json
 { "type": "join_call", "room": "general" }
 { "type": "leave_call", "room": "general" }
+{ "type": "screen_share_start", "room": "general" }
+{ "type": "screen_share_stop", "room": "general" }
 { "type": "call_offer", "room": "general", "to": "bob", "sdp": { "type": "offer", "sdp": "..." } }
 { "type": "call_answer", "room": "general", "to": "alice", "sdp": { "type": "answer", "sdp": "..." } }
 { "type": "ice_candidate", "room": "general", "to": "bob", "candidate": { "candidate": "...", "sdpMid": "0" } }
@@ -185,10 +187,12 @@ Call membership is independent of `join_room`. `join_call` / `leave_call` requir
 { "type": "user_left", "room": "general", "user": "bob" }
 { "type": "message", "message": { "id": 1, "room": "general", "sender": "alice", "content": "hello", "created_at": "<iso>", "file_id": null } }
 { "type": "error", "content": "<reason>", "message": "<reason>" }
-{ "type": "call_peers", "room": "general", "users": ["alice", "bob"] }
+{ "type": "call_peers", "room": "general", "users": ["alice", "bob"], "sharing": null }
 { "type": "user_joined_call", "room": "general", "user": "bob" }
 { "type": "user_left_call", "room": "general", "user": "bob" }
 { "type": "left_call", "room": "general" }
+{ "type": "screen_share_started", "room": "general", "user": "alice" }
+{ "type": "screen_share_stopped", "room": "general", "user": "alice" }
 { "type": "call_offer", "room": "general", "from": "alice", "to": "bob", "sdp": { "type": "offer", "sdp": "..." } }
 { "type": "call_answer", "room": "general", "from": "bob", "to": "alice", "sdp": { "type": "answer", "sdp": "..." } }
 { "type": "ice_candidate", "room": "general", "from": "alice", "to": "bob", "candidate": { "candidate": "...", "sdpMid": "0" } }
