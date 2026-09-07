@@ -35,7 +35,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.14.0 - Add-later (live on `p1`)
 - [x] v0.15.0 - Member chrome (live on `p1`)
 - [x] v0.16.0 - Quiet header (live on `p1`)
-- [ ] v0.17.0 - Touch and transcript
+- [x] v0.17.0 - Touch and transcript (live on `p1`)
 - [ ] v0.18.0 - Rails and call
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
@@ -865,8 +865,9 @@ No camera. Original sound pack stays backlog.
 
 After this release a friend should: collapse rails with icons; expand
 Create room when they want it; see a presence badge on online avatars
-only; collapse an in-call strip to mute and hangup; pick a mic from a
-popup; hear share start/join/end/leave.
+only; collapse an in-call strip to mute, share, and hangup; open call
+settings for the mic; expand for peers and the share preview; hear
+share start/join/end/leave.
 
 ### Locked
 
@@ -877,8 +878,13 @@ popup; hear share start/join/end/leave.
   (needs v0.17 tap).
 - Create room expands from a plus. Collapse/DM-close use IconGlyph.
   Drop the duplicate `Rooms` subhead.
-- Call drawer collapsed strip: In call, mute, hangup, expand. Mic
-  picker is an icon plus popup. Toast sits above the composer on phone.
+- Call strip: In call, mute, share, hangup, settings (cog, rightmost).
+  Expand is a corner tab on the bottom-right of the strip, not an
+  action in the bar. Peers sit in the open drawer above the
+  screen-share preview. Mic / input choice lives in a separate Call
+  settings panel from the cog (inline under the strip, independent of
+  expand; room to grow later). Input control shows icon plus device
+  name. Toast sits above the composer on phone.
 - Four Kenney CC0 cues: `share-start`, `share-join`, `share-end`,
   `share-leave`. Same mute gate as `playSfx`. No double-play on hangup
   or a cancelled picker. Names stay stable for
