@@ -19,6 +19,7 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
     getUserByUsername,
     isRoomMember,
     listRoomsForUser,
+    addMembersToGroup,
   } = await import('./rooms');
 
   const alice = await registerUser('alice', 'hunter2');
@@ -29,6 +30,7 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
   const group = createGroupRoom('Weekend Plans', alice.id, [bob.id]);
   assert.equal(group.type, 'group');
   assert.deepEqual(group.members.sort(), ['alice', 'bob']);
+  assert.equal(listRoomsForUser(alice.username)[0]?.slug, 'general');
 
   const dm = getOrCreateDmRoom(alice.id, bob.id);
   assert.equal(dm.type, 'dm');
@@ -44,6 +46,19 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
   assert.ok(hermes);
   assert.equal(hermes.system, true);
   assert.throws(() => getOrCreateDmRoom(alice.id, hermes.id), /system user/);
+
+  const cara = await registerUser('cara', 'hunter2');
+  addUserToGeneralRoom(cara.id);
+  const added = addMembersToGroup(group.slug, 'alice', [cara.id]);
+  assert.ok(!('error' in added));
+  assert.deepEqual(added.added, ['cara']);
+  assert.equal(isRoomMember(group.slug, 'cara'), true);
+  const again = addMembersToGroup(group.slug, 'alice', [cara.id]);
+  assert.ok(!('error' in again));
+  assert.deepEqual(again.added, []);
+  const blocked = addMembersToGroup(group.slug, 'alice', [hermes.id]);
+  assert.ok('error' in blocked);
+  assert.equal(blocked.error, 'cannot add a system user');
 
   assert.throws(() => getOrCreateDmRoom(alice.id, alice.id), /cannot DM yourself/);
 });

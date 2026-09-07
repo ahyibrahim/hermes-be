@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.13.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.14.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -31,7 +31,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.10.0 - Polish and recovery (live on `p1`)
 - [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
-- [ ] v0.13.0 - Screen share
+- [x] v0.13.0 - Screen share (live on `p1`)
+- [ ] v0.14.0 - Add-later
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -120,7 +121,8 @@ graph LR
   v09 --> v10[v0.10.0 Polish and recovery — shipped]
   v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
-  v12 --> v13[v0.13.0 Screen share]
+  v12 --> v13[v0.13.0 Screen share — shipped]
+  v12 --> v14[v0.14.0 Add-later]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -144,7 +146,9 @@ on the shell: phone-width rails, icon centering, and borrowed CC0 cues.
 Add-later, the member stack, live fan-out, original audio, and more
 markdown stay backlog. Promote/demote, delete-group, and kick stay backlog.
 v0.13.0 is the screen-share pass v0.11.0 reserved layout for: one sharer,
-in-call only, existing P2P mesh. Camera video waits.
+in-call only, existing P2P mesh. Camera video waits. v0.14.0 is the small
+membership leftover from v0.12: add people after create, and fan-out so
+nobody reloads. The who-can-see stack stays backlog.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -576,7 +580,7 @@ fire). Bob may need a reload to see a group Alice just created.
 
 ## v0.13.0 - Screen share
 
-Web-first. One additive signaling slice, no schema. Voice already meshes
+Shipped. Live on `p1`. Web-first. One additive signaling slice, no schema. Voice already meshes
 over `/ws`; the drawer reserved an empty preview row in v0.11.0
 ([fe#71](https://github.com/ahyibrahim/hermes-fe/issues/71)). This release
 fills that row. Keep it moderate: one sharer at a time, screen only, still
@@ -634,15 +638,66 @@ on a phone-width screen works; presenting from a phone may not.
   [fe#93](https://github.com/ahyibrahim/hermes-fe/issues/93) VoiceMesh,
   [fe#94](https://github.com/ahyibrahim/hermes-fe/issues/94) CallBar)
 
+## v0.14.0 - Add-later
+
+Web-first. One additive membership slice, no schema. v0.12 shipped
+create-time invite; Bob still reloads, and nobody can add after create.
+Keep it small: add-later plus live fan-out, including create-time
+invitees. The who-can-see stack stays backlog.
+
+After this release a friend should: add people to an existing group
+(`hermes` stays out; not `general`; not DMs); see that room appear for
+the invitee without a refresh; same for someone invited at create time.
+
+### Locked
+
+- **Groups only.** Not DMs. Not `general`. System user `hermes` is
+  rejected, not invited. No public directory, no join-by-name.
+- **Any current member may add** until roles ship
+  ([be#43](https://github.com/ahyibrahim/hermes-be/issues/43)).
+- **`POST /rooms/members`.** `{ room, userIds: number[] }`. Matches
+  leave/hide (`{ room }` in the body). Idempotent. Unknown ids are 404
+  with no partial add. System users are 400. Newly added members start
+  with unread 0 (watermark at current last message); history is still
+  there when they open the room.
+- **Fan-out.** `member_added` to every current member, including the
+  new ones and the actor. Same frame on create-time invite so Bob does
+  not reload. Identity from the session token. Log
+  `{ event, user, room, added }` — never message content.
+- **Header picker.** Same directory checkboxes as create, on the group
+  header. Exclude current members, self, `hermes`.
+  [fe#96](https://github.com/ahyibrahim/hermes-fe/issues/96). Leave
+  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55) closed.
+- **No face stack.** [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56)
+  stays backlog.
+- Web only for the picker. CLI only if the API forces it. No `s1`.
+  Alice stays admin on `p1`. Bump `package.json` when the
+  release is ready to deploy.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.14.0.md`.
+
+### API
+
+- Add members after create
+  ([be#59](https://github.com/ahyibrahim/hermes-be/issues/59))
+
+### Web
+
+- Header add picker
+  ([fe#96](https://github.com/ahyibrahim/hermes-fe/issues/96))
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
-- Add members after create, live fan-out, who-can-see stack
-  ([be#59](https://github.com/ahyibrahim/hermes-be/issues/59),
-  [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55) add-later
-  half,
+- Member chrome after add-later: drop the create-room invite picker,
+  iconify Add/Leave, Add popup with a shared user list, and the
+  who-can-see stack. Umbrella
+  [fe#97](https://github.com/ahyibrahim/hermes-fe/issues/97)
+  ([fe#98](https://github.com/ahyibrahim/hermes-fe/issues/98),
+  [fe#100](https://github.com/ahyibrahim/hermes-fe/issues/100),
+  [fe#101](https://github.com/ahyibrahim/hermes-fe/issues/101),
   [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
 - Original Hermes sound pack
   ([fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85)
