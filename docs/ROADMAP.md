@@ -32,7 +32,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.11.0 - Call chrome and system hermes (live on `p1`)
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
 - [x] v0.13.0 - Screen share (live on `p1`)
-- [ ] v0.14.0 - Add-later
+- [x] v0.14.0 - Add-later (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -122,7 +122,7 @@ graph LR
   v10 --> v11[v0.11.0 Call chrome and system hermes — shipped]
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
   v12 --> v13[v0.13.0 Screen share — shipped]
-  v12 --> v14[v0.14.0 Add-later]
+  v12 --> v14[v0.14.0 Add-later — shipped]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -640,7 +640,7 @@ on a phone-width screen works; presenting from a phone may not.
 
 ## v0.14.0 - Add-later
 
-Web-first. One additive membership slice, no schema. v0.12 shipped
+Shipped. Live on `p1`. Web-first. One additive membership slice, no schema. v0.12 shipped
 create-time invite; Bob still reloads, and nobody can add after create.
 Keep it small: add-later plus live fan-out, including create-time
 invitees. The who-can-see stack stays backlog.
