@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.14.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.15.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -33,6 +33,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
 - [x] v0.13.0 - Screen share (live on `p1`)
 - [x] v0.14.0 - Add-later (live on `p1`)
+- [ ] v0.15.0 - Member chrome
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -123,6 +124,7 @@ graph LR
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
   v12 --> v13[v0.13.0 Screen share — shipped]
   v12 --> v14[v0.14.0 Add-later — shipped]
+  v14 --> v15[v0.15.0 Member chrome]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -143,12 +145,14 @@ chrome pass plus the first system voice: quieter header controls, a call
 drawer, and one idempotent `#general` post from reserved `hermes`. v0.12.0
 fixes the creator-only group hole **at create time**, then spends the rest
 on the shell: phone-width rails, icon centering, and borrowed CC0 cues.
-Add-later, the member stack, live fan-out, original audio, and more
-markdown stay backlog. Promote/demote, delete-group, and kick stay backlog.
-v0.13.0 is the screen-share pass v0.11.0 reserved layout for: one sharer,
+Add-later, the member stack, and live fan-out waited. Original audio and
+more markdown stay backlog. Promote/demote, delete-group, and kick stay
+backlog. v0.13.0 is the screen-share pass v0.11.0 reserved layout for: one sharer,
 in-call only, existing P2P mesh. Camera video waits. v0.14.0 is the small
 membership leftover from v0.12: add people after create, and fan-out so
-nobody reloads. The who-can-see stack stays backlog.
+nobody reloads. v0.15.0 is the header leftover from that pass: one invite
+surface, icon Add/Leave, and the who-can-see stack. Roles and camera stay
+backlog.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -686,19 +690,79 @@ the invitee without a refresh; same for someone invited at create time.
 - Header add picker
   ([fe#96](https://github.com/ahyibrahim/hermes-fe/issues/96))
 
+## v0.15.0 - Member chrome
+
+Web-first. No new backend endpoint and no schema. v0.14 shipped add-later
+and live fan-out; the header is still the v0.12 leftover: a second invite
+strip under Create room, text Add / Leave, and no who-can-see stack. Keep
+it moderate: one invite surface, a header popup, icon actions, and the
+face stack. No roles, no kick, no camera, no backend contract.
+
+After this release a friend should: create a group by typing a name;
+add people from a header popup that looks like the people rail; see who
+can read the transcript as faces next to the title (including `#general`);
+leave with an icon. Create room is a name field only.
+
+### Locked
+
+- **Web only.** CLI out. No schema. Membership rules stay as v0.14:
+  groups only, not DMs, not `general`, system user `hermes` never
+  offered, any current member may add until
+  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43).
+- **One way to invite: the header.** Create room POSTs a name; you are
+  the first member. `POST /rooms` may still accept `userIds`; the web
+  UI stops sending them from create. Drop the rail picker in the same
+  cut as the Add popup so there is never a window with no invite UI.
+  Leave [fe#55](https://github.com/ahyibrahim/hermes-fe/issues/55)
+  closed.
+- **Hide Add** when nobody is left to invite. That empty gate is
+  intended ([fe#99](https://github.com/ahyibrahim/hermes-fe/issues/99)
+  stays closed).
+- **Icon Add and Leave.** `IconButton` + inline SVG `IconGlyph`, same
+  size and hit target as Join call. Do not reuse `plus` (Create room)
+  or `hangup` (call). Add is person-plus; Leave is a door / exit.
+  Accessible names stay words (`Add people`, `Leave room`). Confirm
+  Leave the same way as today.
+- **Add popup, not a checkbox strip.** Click Add, list appears, Esc /
+  click-out / successful add closes it. Not a full-page modal. Honor
+  `prefers-reduced-motion`. Phone-width: compact popover or short
+  sheet; do not bury Join call or the transcript. Multi-select, then
+  one confirm. Rows reuse Avatar + HoverCard (person, color, online if
+  cheap). Extract a small user-list / user-row component and use it
+  here first; do not restyle the people rail unless that extract drops
+  in without a restyle. Later kick UI may reuse the list; do not build
+  kick now.
+- **Who-can-see stack.** Overlapping avatars in the group header,
+  trailing side, with Add / Leave / Join call. Cap about five faces,
+  then `+N`. Groups including `general`. Not DMs (`@name` already is
+  the other person). Hover is the detail (name, role). Do not start a
+  DM from the stack unless that stays obviously separate from Join
+  call. Reads `GET /rooms` `members`; no new endpoint. [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56)
+  is a child of this release, not of
+  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43).
+- No `s1`. Alice stays admin on `p1`. Bump `package.json` when the
+  release is ready to deploy, not in the first implementation PR.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.15.0.md`.
+
+### Web
+
+- Member chrome. Umbrella
+  [fe#97](https://github.com/ahyibrahim/hermes-fe/issues/97)
+  ([fe#98](https://github.com/ahyibrahim/hermes-fe/issues/98) drop
+  create-room invite picker,
+  [fe#100](https://github.com/ahyibrahim/hermes-fe/issues/100) icon
+  Add/Leave,
+  [fe#101](https://github.com/ahyibrahim/hermes-fe/issues/101) Add
+  popup,
+  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56)
+  who-can-see stack)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
 label until then.
 
-- Member chrome after add-later: drop the create-room invite picker,
-  iconify Add/Leave, Add popup with a shared user list, and the
-  who-can-see stack. Umbrella
-  [fe#97](https://github.com/ahyibrahim/hermes-fe/issues/97)
-  ([fe#98](https://github.com/ahyibrahim/hermes-fe/issues/98),
-  [fe#100](https://github.com/ahyibrahim/hermes-fe/issues/100),
-  [fe#101](https://github.com/ahyibrahim/hermes-fe/issues/101),
-  [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56))
 - Original Hermes sound pack
   ([fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85)
   ([fe#86](https://github.com/ahyibrahim/hermes-fe/issues/86),
