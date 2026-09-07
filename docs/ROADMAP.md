@@ -33,7 +33,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
 - [x] v0.13.0 - Screen share (live on `p1`)
 - [x] v0.14.0 - Add-later (live on `p1`)
-- [ ] v0.15.0 - Member chrome
+- [x] v0.15.0 - Member chrome (live on `p1`)
 - [ ] v0.16.0 - Quiet header
 - [ ] v0.17.0 - Touch and transcript
 - [ ] v0.18.0 - Rails and call
@@ -127,7 +127,7 @@ graph LR
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
   v12 --> v13[v0.13.0 Screen share — shipped]
   v12 --> v14[v0.14.0 Add-later — shipped]
-  v14 --> v15[v0.15.0 Member chrome]
+  v14 --> v15[v0.15.0 Member chrome — shipped]
   v15 --> v16[v0.16.0 Quiet header]
   v16 --> v17[v0.17.0 Touch and transcript]
   v17 --> v18[v0.18.0 Rails and call]
@@ -701,7 +701,7 @@ the invitee without a refresh; same for someone invited at create time.
 
 ## v0.15.0 - Member chrome
 
-Web-first. No new backend endpoint and no schema. v0.14 shipped add-later
+Shipped. Live on `p1`. Web-first. No new backend endpoint and no schema. v0.14 shipped add-later
 and live fan-out; the header is still the v0.12 leftover: a second invite
 strip under Create room, text Add / Leave, and no who-can-see stack. Keep
 it moderate: one invite surface, a header popup, icon actions, and the
