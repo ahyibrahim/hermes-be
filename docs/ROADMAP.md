@@ -34,7 +34,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.13.0 - Screen share (live on `p1`)
 - [x] v0.14.0 - Add-later (live on `p1`)
 - [x] v0.15.0 - Member chrome (live on `p1`)
-- [ ] v0.16.0 - Quiet header
+- [x] v0.16.0 - Quiet header (live on `p1`)
 - [ ] v0.17.0 - Touch and transcript
 - [ ] v0.18.0 - Rails and call
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
@@ -128,7 +128,7 @@ graph LR
   v12 --> v13[v0.13.0 Screen share — shipped]
   v12 --> v14[v0.14.0 Add-later — shipped]
   v14 --> v15[v0.15.0 Member chrome — shipped]
-  v15 --> v16[v0.16.0 Quiet header]
+  v15 --> v16[v0.16.0 Quiet header — shipped]
   v16 --> v17[v0.17.0 Touch and transcript]
   v17 --> v18[v0.18.0 Rails and call]
 ```
