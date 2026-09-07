@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.15.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.18.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -33,7 +33,10 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.12.0 - Invite, phone shell, and cues (live on `p1`)
 - [x] v0.13.0 - Screen share (live on `p1`)
 - [x] v0.14.0 - Add-later (live on `p1`)
-- [ ] v0.15.0 - Member chrome
+- [x] v0.15.0 - Member chrome (live on `p1`)
+- [ ] v0.16.0 - Quiet header
+- [ ] v0.17.0 - Touch and transcript
+- [ ] v0.18.0 - Rails and call
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -124,7 +127,10 @@ graph LR
   v11 --> v12[v0.12.0 Invite, phone shell, and cues — shipped]
   v12 --> v13[v0.13.0 Screen share — shipped]
   v12 --> v14[v0.14.0 Add-later — shipped]
-  v14 --> v15[v0.15.0 Member chrome]
+  v14 --> v15[v0.15.0 Member chrome — shipped]
+  v15 --> v16[v0.16.0 Quiet header]
+  v16 --> v17[v0.17.0 Touch and transcript]
+  v17 --> v18[v0.18.0 Rails and call]
 ```
 
 The password bugfix goes in v0.2.0 rather than being squeezed anywhere, because
@@ -151,8 +157,11 @@ backlog. v0.13.0 is the screen-share pass v0.11.0 reserved layout for: one share
 in-call only, existing P2P mesh. Camera video waits. v0.14.0 is the small
 membership leftover from v0.12: add people after create, and fan-out so
 nobody reloads. v0.15.0 is the header leftover from that pass: one invite
-surface, icon Add/Leave, and the who-can-see stack. Roles and camera stay
-backlog.
+surface, icon Add/Leave, and the who-can-see stack. v0.16.0 quiets that
+header: room menu, user menu, Join call stays. v0.17.0 is phone/touch plus
+transcript (autolink, images, bubbles). v0.18.0 is the same quiet-chrome
+idea on the rails and the call drawer. Lists/strike markdown, roles, and
+camera stay backlog.
 
 ## v0.2.0 - Cleanup and CLI fix
 
@@ -692,7 +701,7 @@ the invitee without a refresh; same for someone invited at create time.
 
 ## v0.15.0 - Member chrome
 
-Web-first. No new backend endpoint and no schema. v0.14 shipped add-later
+Shipped. Live on `p1`. Web-first. No new backend endpoint and no schema. v0.14 shipped add-later
 and live fan-out; the header is still the v0.12 leftover: a second invite
 strip under Create room, text Add / Leave, and no who-can-see stack. Keep
 it moderate: one invite surface, a header popup, icon actions, and the
@@ -758,6 +767,150 @@ leave with an icon. Create room is a name field only.
   [fe#56](https://github.com/ahyibrahim/hermes-fe/issues/56)
   who-can-see stack)
 
+## v0.16.0 - Quiet header
+
+Web-first. No new backend endpoint and no schema. v0.15 made the header
+capable (icon Add/Leave, add popup, who-can-see stack). The right side
+still mixes room admin, Join call, and app/session in one row. Leave has
+no confirm. On phone the bar wraps. Keep it a chrome pass: two small
+menus, then a shrink. Join call stays. No rails restyle, no transcript,
+no settings page.
+
+After this release a friend should: click the title (and faces, on a
+group) for members, Add, and Leave with a confirm; click their avatar
+for profile, notifications, connection status, and sign out; see Join
+call next to that avatar; never see the word "connected" when the socket
+is healthy.
+
+### Locked
+
+- **Web only.** CLI out. No schema. No new endpoint.
+- **Header keeps** room title, member-stack preview (groups), Join call,
+  own avatar (no username).
+- **Room menu** from the title+faces lead. DMs have no menu. `general`
+  has members only (no Add/Leave). Nest the existing add popup. In-menu
+  Leave confirm.
+- **User menu** from the avatar: `/profile`, notifications/sounds,
+  connection status, Sign out. Unhealthy is a cue on the avatar.
+- Phone: four slots, one row. No extra `•••` unless QA shows the lead is
+  undiscoverable.
+- No `s1`. Alice stays admin on `p1`. Bump `package.json` when the
+  release is ready to deploy, not in the first implementation PR.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.16.0.md`.
+
+### Web
+
+- Quiet header. Umbrella
+  [fe#105](https://github.com/ahyibrahim/hermes-fe/issues/105)
+  ([fe#109](https://github.com/ahyibrahim/hermes-fe/issues/109) room
+  menu,
+  [fe#110](https://github.com/ahyibrahim/hermes-fe/issues/110) user
+  menu,
+  [fe#111](https://github.com/ahyibrahim/hermes-fe/issues/111) shrink)
+
+## v0.17.0 - Touch and transcript
+
+Web-first. Autolink is the only `@hermes/core` change. After the header
+is quiet, phone still cannot peek a profile or unsend, Enter-to-send
+fights the phone keyboard, URLs are dead text, images have no expand,
+and bubbles are full-width cards. Not lists/strike, not a markdown
+toggle, not rails or call chrome.
+
+After this release a friend should: tap a name to see the hover card;
+unsend on a phone; tap Send to send (Enter is newline on phone); click
+a URL; expand an image; see short messages hug their text with a quiet
+tint.
+
+### Locked
+
+- **Web-first.** Autolink in `parseMessageBody`; CLI sees the part type
+  and needs no new UI. `http(s)` only. Not inside code. Not lists,
+  strike, headings, quotes.
+- HoverCard tap-to-open on coarse pointers; hover stays for
+  `(hover: hover)`.
+- Unsend hide-until-hover only under `@media (hover: hover)`.
+- Desktop keeps Enter-to-send. Phone uses Send. Shift+Enter is newline
+  everywhere.
+- Own messages stay left. Bubble wash about 10% / 12%, no shadow,
+  `fit-content`, flatten the corner toward the avatar.
+- Image expand reuses the call-share overlay. Not a gallery.
+- Composer attach chip sits next to Attach, not after Send.
+- No `s1`. Bump `package.json` when the release is ready to deploy, not
+  in the first implementation PR.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.17.0.md`.
+
+### Web
+
+- Touch and transcript. Umbrella
+  [fe#106](https://github.com/ahyibrahim/hermes-fe/issues/106)
+  ([fe#112](https://github.com/ahyibrahim/hermes-fe/issues/112)
+  phone/touch,
+  [fe#113](https://github.com/ahyibrahim/hermes-fe/issues/113)
+  composer chip,
+  [fe#114](https://github.com/ahyibrahim/hermes-fe/issues/114)
+  autolink,
+  [fe#115](https://github.com/ahyibrahim/hermes-fe/issues/115) image
+  expand,
+  [fe#116](https://github.com/ahyibrahim/hermes-fe/issues/116) bubbles)
+
+## v0.18.0 - Rails and call
+
+Web-first. No new signaling. Same quiet-chrome idea on the other two
+columns: ASCII rail controls, a permanent Create room field, hue-only
+presence dots, a full in-call row, a native mic `<select>`, a toast that
+can cover Send, and silent screen share. Two umbrellas in one release.
+No camera. Original sound pack stays backlog.
+
+After this release a friend should: collapse rails with icons; expand
+Create room when they want it; see a presence badge on online avatars
+only; collapse an in-call strip to mute and hangup; pick a mic from a
+popup; hear share start/join/end/leave.
+
+### Locked
+
+- **Web only.** CLI out. No schema.
+- Presence badge on Avatar, online only, on the people rail, add picker,
+  and DM list. Not on the header avatar.
+- Reset password leaves the people-row key and stays on HoverCard
+  (needs v0.17 tap).
+- Create room expands from a plus. Collapse/DM-close use IconGlyph.
+  Drop the duplicate `Rooms` subhead.
+- Call drawer collapsed strip: In call, mute, hangup, expand. Mic
+  picker is an icon plus popup. Toast sits above the composer on phone.
+- Four Kenney CC0 cues: `share-start`, `share-join`, `share-end`,
+  `share-leave`. Same mute gate as `playSfx`. No double-play on hangup
+  or a cancelled picker. Names stay stable for
+  [fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85).
+- No `s1`. Bump `package.json` when the release is ready to deploy, not
+  in the first implementation PR.
+- One idempotent `#general` post from `hermes`; copy in
+  `docs/announcements/v0.18.0.md`.
+
+### Web
+
+- Rails. Umbrella
+  [fe#107](https://github.com/ahyibrahim/hermes-fe/issues/107)
+  ([fe#117](https://github.com/ahyibrahim/hermes-fe/issues/117)
+  glyphs,
+  [fe#118](https://github.com/ahyibrahim/hermes-fe/issues/118) create
+  room,
+  [fe#119](https://github.com/ahyibrahim/hermes-fe/issues/119)
+  reset-password key,
+  [fe#120](https://github.com/ahyibrahim/hermes-fe/issues/120)
+  presence badge)
+- Call chrome. Umbrella
+  [fe#108](https://github.com/ahyibrahim/hermes-fe/issues/108)
+  ([fe#121](https://github.com/ahyibrahim/hermes-fe/issues/121)
+  drawer,
+  [fe#122](https://github.com/ahyibrahim/hermes-fe/issues/122) mic
+  picker,
+  [fe#123](https://github.com/ahyibrahim/hermes-fe/issues/123) call
+  toast,
+  [fe#124](https://github.com/ahyibrahim/hermes-fe/issues/124)
+  share SFX)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -770,8 +923,8 @@ label until then.
 - App settings menu
   ([fe#88](https://github.com/ahyibrahim/hermes-fe/issues/88)
   ([fe#89](https://github.com/ahyibrahim/hermes-fe/issues/89)))
-- More markdown (autolink, lists, strike). v0.10 locked inline `code` plus
-  emphasis; URLs stay text until this is scheduled
+- More markdown (lists, strike). Autolink moved to v0.17.0; v0.10 locked
+  inline `code` plus emphasis. No composer markdown toggle.
 - Roles and moderation: promote/demote (multiple admins, cannot demote the
   last admin); delete a group (creator or admin; hard-delete; confirm UI);
   kick; admin-delete of others' messages. Umbrella
