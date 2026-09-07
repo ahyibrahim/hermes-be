@@ -75,8 +75,9 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
 | POST | `/auth/login` | no | Rate limited. Rehashes legacy SHA256 passwords to argon2id. |
 | POST | `/auth/reset` | no | Rate limited like login. `{ username, token, password }` → new session. |
 | GET | `/rooms` | Bearer | Visible membership `[{ id, slug, name, type, created_at, members, unread_count, last_message }]`. Hidden DMs omitted. |
-| POST | `/rooms` | Bearer | `{ name, members?: number[] }` → group room. Creator is always a member. |
+| POST | `/rooms` | Bearer | `{ name, members?: number[] }` → group room. Creator is always a member. Invitees get `member_added`. |
 | POST | `/rooms/dm` | Bearer | `{ userId }` → existing or new DM. Clears hide for the caller. 400 for self-DM. |
+| POST | `/rooms/members` | Bearer | `{ room, userIds: number[] }` groups only. Idempotent. 400 on `general`/DM/system. 404 unknown id (no partial). |
 | POST | `/rooms/hide` | Bearer | `{ room }` DMs only. 400 on groups/`general`. Membership stays; row is hidden. |
 | POST | `/rooms/leave` | Bearer | `{ room }` groups only. 400 on a DM or `general`. |
 | GET | `/users` | Bearer | `[{ id, username, role, avatar_file_id }]` |
@@ -101,8 +102,8 @@ Rooms are **slugs** (`general`, `dm:alice:bob`), never numeric ids. `GET /messag
   "status": "ok",
   "service": "hermes-be",
   "message": "Backend is running",
-  "version": "0.12.0",
-  "commit": "8f8d92ef239e09938c19d7a4df105ac3605af87b"
+  "version": "0.14.0",
+  "commit": "42f27c9d271f2550af6c5bb852315324d052841a"
 }
 ```
 
@@ -187,6 +188,7 @@ Call membership is independent of `join_room`. `join_call` / `leave_call` requir
 { "type": "user_left", "room": "general", "user": "bob" }
 { "type": "message", "message": { "id": 1, "room": "general", "sender": "alice", "content": "hello", "created_at": "<iso>", "file_id": null } }
 { "type": "error", "content": "<reason>", "message": "<reason>" }
+{ "type": "member_added", "room": "group:weekend:1", "added_by": "alice", "users": ["bob"], "members": ["alice", "bob"] }
 { "type": "call_peers", "room": "general", "users": ["alice", "bob"], "sharing": null }
 { "type": "user_joined_call", "room": "general", "user": "bob" }
 { "type": "user_left_call", "room": "general", "user": "bob" }
@@ -229,7 +231,7 @@ journalctl -u hermes-be@p1 -f
 
 ## Roadmap
 
-[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.12.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
+[docs/ROADMAP.md](docs/ROADMAP.md) is the source of truth for release scope, v0.2.0 through v0.14.0. Architecture decisions are recorded in [docs/adr/](docs/adr/): [0001](docs/adr/0001-frontend-stack.md) on the SvelteKit web stack, [0002](docs/adr/0002-deployment-topology.md) on the deployment topology.
 
 ## Out of scope for now
 

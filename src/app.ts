@@ -34,6 +34,7 @@ import {
   setUserColor,
   takenColors,
   unreadCount,
+  addMembersToGroup,
 } from './rooms';
 import {
   changePassword,
@@ -319,6 +320,20 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       }
       sendToUser(name, payload);
     }
+  }
+
+  function fanOutMembership(slug: string, addedBy: string, added: string[]): void {
+    if (added.length === 0) {
+      return;
+    }
+    const members = listRoomMembers(slug);
+    broadcastToMembers(slug, {
+      type: 'member_added',
+      room: slug,
+      added_by: addedBy,
+      users: added,
+      members,
+    });
   }
 
   function sendToUser(username: string, payload: unknown): void {
@@ -803,6 +818,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       : [];
 
     const room = createGroupRoom(body.name, me.id, memberIds);
+    const invited = room.members.filter((member) => member !== username);
+    fanOutMembership(room.slug, username, invited);
     request.log.info({ event: 'room_create', user: username, room: room.slug }, 'created group room');
     return room;
   });
@@ -886,6 +903,37 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
     request.log.info({ event: 'room_hide', user: username, room: slug }, 'hid DM');
     return { ok: true, room: slug };
+  });
+
+  fastify.post('/rooms/members', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { room?: string; userIds?: unknown };
+    const slug = normalizeRoomSlug(body.room);
+    if (!slug) {
+      reply.code(400);
+      return { error: 'room is required' };
+    }
+    if (!Array.isArray(body.userIds)) {
+      reply.code(400);
+      return { error: 'userIds is required' };
+    }
+
+    const result = addMembersToGroup(slug, username, body.userIds as number[]);
+    if ('error' in result) {
+      reply.code(result.status);
+      return { error: result.error };
+    }
+
+    fanOutMembership(slug, username, result.added);
+    request.log.info(
+      { event: 'member_add', user: username, room: slug, added: result.added },
+      'added members to group'
+    );
+    return result.room;
   });
 
   fastify.post('/rooms/read', async (request, reply) => {

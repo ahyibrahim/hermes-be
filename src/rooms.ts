@@ -170,7 +170,7 @@ export function listRoomsForUser(username: string): RoomSummary[] {
       FROM rooms r
       JOIN room_members rm ON rm.room_id = r.id
       WHERE rm.user_id = ? AND rm.hidden_at IS NULL
-      ORDER BY r.created_at ASC, r.id ASC
+      ORDER BY CASE WHEN r.slug = 'general' THEN 0 ELSE 1 END, r.created_at ASC, r.id ASC
     `
     )
     .all(user.id) as RoomRecord[];
@@ -188,10 +188,11 @@ export function createGroupRoom(
     throw new Error('name is required');
   }
 
+  const createdAt = isoTimestamp();
   const slug = `group:${trimmed.toLowerCase().replace(/\s+/g, '-')}:${Date.now()}`;
   const result = getDb()
-    .prepare("INSERT INTO rooms (slug, name, type) VALUES (?, ?, 'group')")
-    .run(slug, trimmed);
+    .prepare("INSERT INTO rooms (slug, name, type, created_at) VALUES (?, ?, 'group', ?)")
+    .run(slug, trimmed, createdAt);
 
   const roomId = Number(result.lastInsertRowid);
   const uniqueMembers = new Set([creatorUserId, ...memberUserIds]);
@@ -207,7 +208,7 @@ export function createGroupRoom(
     slug,
     name: trimmed,
     type: 'group',
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   });
 }
 
@@ -239,9 +240,10 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
   }
 
   const name = members.map((member) => member.username).join(', ');
+  const createdAt = isoTimestamp();
   const result = getDb()
-    .prepare("INSERT INTO rooms (slug, name, type) VALUES (?, ?, 'dm')")
-    .run(slug, name);
+    .prepare("INSERT INTO rooms (slug, name, type, created_at) VALUES (?, ?, 'dm', ?)")
+    .run(slug, name, createdAt);
 
   const roomId = Number(result.lastInsertRowid);
   addMemberIds(roomId, userId);
@@ -252,8 +254,59 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
     slug,
     name,
     type: 'dm',
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   });
+}
+
+export function addMembersToGroup(
+  slug: string,
+  actorUsername: string,
+  memberUserIds: number[]
+): { room: RoomSummary; added: string[] } | { error: string; status: 400 | 403 | 404 } {
+  if (slug === 'general') {
+    return { error: 'cannot add members to general', status: 400 };
+  }
+  const room = getRoomBySlug(slug);
+  if (!room) {
+    return { error: 'not a member of this room', status: 403 };
+  }
+  if (room.type === 'dm') {
+    return { error: 'cannot add members to a DM', status: 400 };
+  }
+  if (!isRoomMember(slug, actorUsername)) {
+    return { error: 'not a member of this room', status: 403 };
+  }
+  if (memberUserIds.length === 0) {
+    return { error: 'userIds is required', status: 400 };
+  }
+  if (memberUserIds.some((id) => typeof id !== 'number' || !Number.isInteger(id))) {
+    return { error: 'userIds is required', status: 400 };
+  }
+
+  const uniqueIds = [...new Set(memberUserIds)];
+  const resolved: PublicUser[] = [];
+  for (const id of uniqueIds) {
+    const user = getUserById(id);
+    if (!user) {
+      return { error: 'user not found', status: 404 };
+    }
+    if (user.system) {
+      return { error: 'cannot add a system user', status: 400 };
+    }
+    resolved.push(user);
+  }
+
+  const added: string[] = [];
+  for (const user of resolved) {
+    if (isRoomMember(slug, user.username)) {
+      continue;
+    }
+    addMemberIds(room.id, user.id);
+    markRoomRead(user.id, slug);
+    added.push(user.username);
+  }
+
+  return { room: toSummary(room), added };
 }
 
 export function leaveRoom(slug: string, username: string): { ok: true } | { error: string } {
