@@ -7,6 +7,7 @@ export interface RoomRecord {
   name: string;
   type: 'group' | 'dm';
   created_at: string;
+  creator_id: number | null;
 }
 
 export interface LastMessagePreview {
@@ -102,9 +103,18 @@ export function listUsers(): PublicUser[] {
 }
 
 export function getRoomBySlug(slug: string): RoomRecord | undefined {
-  return getDb()
-    .prepare('SELECT id, slug, name, type, created_at FROM rooms WHERE slug = ?')
-    .get(slug) as RoomRecord | undefined;
+  const row = getDb()
+    .prepare('SELECT id, slug, name, type, created_at, creator_id FROM rooms WHERE slug = ?')
+    .get(slug) as
+    | (Omit<RoomRecord, 'creator_id'> & { creator_id?: number | null })
+    | undefined;
+  if (!row) {
+    return undefined;
+  }
+  return {
+    ...row,
+    creator_id: row.creator_id ?? null,
+  };
 }
 
 export function ensureRoom(slug: string, name = slug, type: 'group' | 'dm' = 'group'): RoomRecord {
@@ -163,17 +173,19 @@ export function listRoomsForUser(username: string): RoomSummary[] {
     return [];
   }
 
-  const rooms = getDb()
-    .prepare(
-      `
-      SELECT r.id, r.slug, r.name, r.type, r.created_at
+  const rooms = (
+    getDb()
+      .prepare(
+        `
+      SELECT r.id, r.slug, r.name, r.type, r.created_at, r.creator_id
       FROM rooms r
       JOIN room_members rm ON rm.room_id = r.id
       WHERE rm.user_id = ? AND rm.hidden_at IS NULL
       ORDER BY CASE WHEN r.slug = 'general' THEN 0 ELSE 1 END, r.created_at ASC, r.id ASC
     `
-    )
-    .all(user.id) as RoomRecord[];
+      )
+      .all(user.id) as Array<Omit<RoomRecord, 'creator_id'> & { creator_id?: number | null }>
+  ).map((row) => ({ ...row, creator_id: row.creator_id ?? null }));
 
   return rooms.map(toSummary);
 }
@@ -191,8 +203,10 @@ export function createGroupRoom(
   const createdAt = isoTimestamp();
   const slug = `group:${trimmed.toLowerCase().replace(/\s+/g, '-')}:${Date.now()}`;
   const result = getDb()
-    .prepare("INSERT INTO rooms (slug, name, type, created_at) VALUES (?, ?, 'group', ?)")
-    .run(slug, trimmed, createdAt);
+    .prepare(
+      "INSERT INTO rooms (slug, name, type, created_at, creator_id) VALUES (?, ?, 'group', ?, ?)"
+    )
+    .run(slug, trimmed, createdAt, creatorUserId);
 
   const roomId = Number(result.lastInsertRowid);
   const uniqueMembers = new Set([creatorUserId, ...memberUserIds]);
@@ -209,6 +223,7 @@ export function createGroupRoom(
     name: trimmed,
     type: 'group',
     created_at: createdAt,
+    creator_id: creatorUserId,
   });
 }
 
@@ -255,6 +270,7 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
     name,
     type: 'dm',
     created_at: createdAt,
+    creator_id: null,
   });
 }
 
@@ -328,6 +344,103 @@ export function leaveRoom(slug: string, username: string): { ok: true } | { erro
     .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
     .run(room.id, user.id);
   return { ok: true };
+}
+
+export function kickMember(
+  slug: string,
+  targetUserId: number
+):
+  | { room: RoomSummary; removed: string }
+  | { error: string; status: 400 | 403 | 404 } {
+  if (slug === 'general') {
+    return { error: 'cannot kick from general', status: 400 };
+  }
+  const room = getRoomBySlug(slug);
+  if (!room) {
+    return { error: 'room not found', status: 404 };
+  }
+  if (room.type === 'dm') {
+    return { error: 'cannot kick from a DM', status: 400 };
+  }
+
+  const target = getUserById(targetUserId);
+  if (!target) {
+    return { error: 'user not found', status: 404 };
+  }
+  if (target.system) {
+    return { error: 'cannot kick a system user', status: 400 };
+  }
+  if (!isRoomMember(slug, target.username)) {
+    return { error: 'not a member of this room', status: 404 };
+  }
+
+  getDb()
+    .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
+    .run(room.id, target.id);
+
+  return { room: toSummary(room), removed: target.username };
+}
+
+export function deleteGroupRoom(
+  slug: string
+):
+  | { slug: string; members: string[]; filePaths: string[] }
+  | { error: string; status: 400 | 404 } {
+  if (slug === 'general') {
+    return { error: 'cannot delete general', status: 400 };
+  }
+  const room = getRoomBySlug(slug);
+  if (!room) {
+    return { error: 'room not found', status: 404 };
+  }
+  if (room.type === 'dm') {
+    return { error: 'cannot delete a DM', status: 400 };
+  }
+
+  const members = membersOf(room.id);
+  const files = getDb()
+    .prepare('SELECT id, path FROM files WHERE room = ?')
+    .all(slug) as Array<{ id: number; path: string }>;
+  const filePaths = files.map((file) => file.path);
+
+  const run = getDb().transaction(() => {
+    getDb().prepare('DELETE FROM messages WHERE room = ?').run(slug);
+    getDb().prepare('DELETE FROM files WHERE room = ?').run(slug);
+    getDb().prepare('DELETE FROM room_reads WHERE room = ?').run(slug);
+    getDb().prepare('DELETE FROM room_members WHERE room_id = ?').run(room.id);
+    getDb().prepare('DELETE FROM rooms WHERE id = ?').run(room.id);
+  });
+  run();
+
+  return { slug, members, filePaths };
+}
+
+export function countAdmins(): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND COALESCE(system, 0) = 0")
+    .get() as { n: number };
+  return row.n;
+}
+
+export function setUserRole(
+  username: string,
+  role: 'member' | 'admin'
+): PublicUser | { error: 'not_found' | 'system_user' | 'last_admin' } {
+  const user = getUserByUsername(username);
+  if (!user) {
+    return { error: 'not_found' };
+  }
+  if (user.system) {
+    return { error: 'system_user' };
+  }
+  if (user.role === role) {
+    return user;
+  }
+  if (user.role === 'admin' && role === 'member' && countAdmins() <= 1) {
+    return { error: 'last_admin' };
+  }
+  getDb().prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);
+  return getUserByUsername(username) as PublicUser;
 }
 
 export function hideRoom(slug: string, username: string): { ok: true } | { error: string } {

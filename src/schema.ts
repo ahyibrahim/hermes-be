@@ -227,6 +227,47 @@ function ensureUniqueUserColorIndex(db: SqliteDb, log: SchemaLogger): void {
   );
 }
 
+function backfillRoomCreators(db: SqliteDb, log: SchemaLogger): void {
+  if (!columnNames(db, 'rooms').has('creator_id')) {
+    note(log, false, 'backfill', { table: 'rooms', column: 'creator_id' }, 'rooms.creator_id absent');
+    return;
+  }
+  if (!tableExists(db, 'room_members')) {
+    note(log, false, 'backfill', { table: 'rooms', column: 'creator_id' }, 'room_members absent');
+    return;
+  }
+
+  // Earliest member by rowid approximates the creator for legacy groups.
+  // DMs and rooms with no members stay NULL (admin-only delete).
+  const result = db
+    .prepare(
+      `UPDATE rooms
+       SET creator_id = (
+         SELECT rm.user_id
+         FROM room_members rm
+         WHERE rm.room_id = rooms.id
+         ORDER BY rm.rowid ASC
+         LIMIT 1
+       )
+       WHERE creator_id IS NULL
+         AND type = 'group'
+         AND slug != 'general'
+         AND EXISTS (
+           SELECT 1 FROM room_members rm2 WHERE rm2.room_id = rooms.id
+         )`
+    )
+    .run();
+  note(
+    log,
+    result.changes > 0,
+    'backfill',
+    { table: 'rooms', column: 'creator_id', changes: result.changes },
+    result.changes > 0
+      ? `backfilled creator_id on ${result.changes} group room(s)`
+      : 'rooms.creator_id already populated or no legacy groups'
+  );
+}
+
 function backfillFirstAdmin(db: SqliteDb, log: SchemaLogger): void {
   const admins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get() as {
     n: number;
@@ -638,6 +679,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   addColumnIfMissing(db, log, 'rooms', 'name', "TEXT NOT NULL DEFAULT 'general'");
   addColumnIfMissing(db, log, 'rooms', 'created_at', "TEXT DEFAULT ''");
   backfillEmpty(db, log, 'rooms', 'created_at');
+  addColumnIfMissing(db, log, 'rooms', 'creator_id', 'INTEGER');
 
   const seeded = db.prepare("INSERT OR IGNORE INTO rooms (slug, name, type) VALUES (?, ?, 'group')").run(
     'general',
@@ -654,6 +696,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   migrateRoomMembers(db, log);
   addColumnIfMissing(db, log, 'room_members', 'hidden_at', 'TEXT');
   backfillGeneralMembership(db, log);
+  backfillRoomCreators(db, log);
 
   ensureTable(
     db,

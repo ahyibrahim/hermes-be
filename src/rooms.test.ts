@@ -29,6 +29,7 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
 
   const group = createGroupRoom('Weekend Plans', alice.id, [bob.id]);
   assert.equal(group.type, 'group');
+  assert.equal(group.creator_id, alice.id);
   assert.deepEqual(group.members.sort(), ['alice', 'bob']);
   assert.equal(listRoomsForUser(alice.username)[0]?.slug, 'general');
 
