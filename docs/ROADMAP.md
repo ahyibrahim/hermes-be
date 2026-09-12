@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.18.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.20.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -37,6 +37,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.16.0 - Quiet header (live on `p1`)
 - [x] v0.17.0 - Touch and transcript (live on `p1`)
 - [ ] v0.18.0 - Rails and call
+- [ ] v0.19.0 - Roles and moderation
+- [ ] v0.20.0 - Watch together (YouTube)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -917,6 +919,111 @@ share start/join/end/leave.
   [fe#124](https://github.com/ahyibrahim/hermes-fe/issues/124)
   share SFX)
 
+## v0.19.0 - Roles and moderation
+
+Make `users.role` real. One umbrella, BE + FE children. Ships **before**
+Watch together so v0.20 can gate controls through the same `can()` helper
+instead of a parallel permission story.
+
+After this release a friend should: promote or demote admins (not the last
+admin); kick someone from a group; delete a group they created or as admin;
+admin-delete someone else's message; and know that feature checks share one
+authorization helper (including reserved `watch.*` actions for v0.20).
+
+### Locked
+
+- Two roles only (`member` / `admin`). Multiple admins. Cannot demote the
+  last admin.
+- Delete group: creator or admin; hard-delete; confirm UI; additive
+  `rooms.creator_id`; broadcast `room_deleted`.
+- Kick: groups only; honor existing leave restrictions for rooms that
+  cannot be left.
+- Admin-delete messages: soft-delete via existing unsend path; sender
+  unsend unchanged for non-admins.
+- Authorization helper ([be#78](https://github.com/ahyibrahim/hermes-be/issues/78))
+  for moderation actions; document / reserve `watch.start`,
+  `watch.play_pause`, `watch.seek`, `watch.end` for v0.20 (default: admin,
+  plus session host once watch exists).
+- Do not invent room-scoped custom roles in this release.
+- Invite/add policy: leave “any member may add” unless a child explicitly
+  tightens it in ROADMAP during implementation.
+- No `s1` unless delete-group backfill proves otherwise. Bump
+  `package.json` when ready to deploy. Announcement in
+  `docs/announcements/v0.19.0.md`.
+
+### Backend
+
+- Roles and moderation. Umbrella
+  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
+  ([be#78](https://github.com/ahyibrahim/hermes-be/issues/78) authz,
+  [be#75](https://github.com/ahyibrahim/hermes-be/issues/75) promote/demote,
+  [be#76](https://github.com/ahyibrahim/hermes-be/issues/76) kick,
+  [be#77](https://github.com/ahyibrahim/hermes-be/issues/77) admin-delete
+  messages,
+  [be#41](https://github.com/ahyibrahim/hermes-be/issues/41) delete group)
+
+### Web
+
+- [fe#128](https://github.com/ahyibrahim/hermes-fe/issues/128) promote/demote,
+  [fe#129](https://github.com/ahyibrahim/hermes-fe/issues/129) kick,
+  [fe#130](https://github.com/ahyibrahim/hermes-fe/issues/130) admin-delete
+  messages,
+  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27) confirm delete
+  group
+
+## v0.20.0 - Watch together (YouTube)
+
+Shared live viewing for YouTube links pasted in chat. Depends on v0.19
+roles / `can()`. Two umbrellas (BE + FE). Not a second call: watch and
+voice may run together; one watch session per room.
+
+After this release a friend should: see **Watch together** under a YouTube
+link; open an overlay others can join; hear start/join/end/leave cues;
+follow host/admin playback; stay in a voice call at the same time; and see
+a short `hermes` system line when a session starts (and optionally ends).
+
+### Locked
+
+- **YouTube only**; provider hook for later (Twitch, etc.).
+- **One active session per room**; CTA joins/focuses if one exists.
+- **Watch + call coexist**; screen share stays call-scoped.
+- Server is source of truth for play/pause/seek/rate + timestamp.
+- Controls: session host **or** admin (`watch.*` via v0.19 `can()`). Any
+  room member may start if none active; anyone may join as spectator.
+- System messages: one `hermes` start line (who + URL); optional end line;
+  no join/leave spam in the transcript.
+- YouTube IFrame Player API (not a dumb iframe). Late join → live position.
+- Four Kenney-reusable cues (names stable for
+  [fe#85](https://github.com/ahyibrahim/hermes-fe/issues/85)):
+  `watch-start`, `watch-join`, `watch-end`, `watch-leave`. Prefer mappings
+  that do not sound identical to share’s select/close pair. Same mute gate
+  as `playSfx`; no cue on pause/seek; no double-play on echo frames.
+- In-memory session like calls; no durable watch table in v1.
+- Web only. CLI out. No `s1`. Bump `package.json` when ready to deploy.
+  Announcement in `docs/announcements/v0.20.0.md`.
+
+### Backend
+
+- Watch together. Umbrella
+  [be#81](https://github.com/ahyibrahim/hermes-be/issues/81)
+  ([be#79](https://github.com/ahyibrahim/hermes-be/issues/79) session WS,
+  [be#80](https://github.com/ahyibrahim/hermes-be/issues/80) system
+  messages)
+
+### Web
+
+- Watch together. Umbrella
+  [fe#137](https://github.com/ahyibrahim/hermes-fe/issues/137)
+  ([fe#131](https://github.com/ahyibrahim/hermes-fe/issues/131) CTA,
+  [fe#132](https://github.com/ahyibrahim/hermes-fe/issues/132) core frames,
+  [fe#133](https://github.com/ahyibrahim/hermes-fe/issues/133) overlay +
+  sync,
+  [fe#134](https://github.com/ahyibrahim/hermes-fe/issues/134) privilege
+  UI,
+  [fe#135](https://github.com/ahyibrahim/hermes-fe/issues/135) call
+  coexistence,
+  [fe#136](https://github.com/ahyibrahim/hermes-fe/issues/136) watch SFX)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -931,15 +1038,10 @@ label until then.
   ([fe#89](https://github.com/ahyibrahim/hermes-fe/issues/89)))
 - More markdown (lists, strike). Autolink moved to v0.17.0; v0.10 locked
   inline `code` plus emphasis. No composer markdown toggle.
-- Roles and moderation: promote/demote (multiple admins, cannot demote the
-  last admin); delete a group (creator or admin; hard-delete; confirm UI);
-  kick; admin-delete of others' messages. Umbrella
-  [be#43](https://github.com/ahyibrahim/hermes-be/issues/43)
-  ([be#41](https://github.com/ahyibrahim/hermes-be/issues/41),
-  [fe#27](https://github.com/ahyibrahim/hermes-fe/issues/27))
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
 - Camera video in the call drawer. Same mesh as v0.13.0 screen share;
   different UI (always-on tiles vs opt-in preview)
+- Watch together: non-YouTube providers (Twitch, Vimeo, …) after v0.20.0
 - Search, read receipts, typing indicators, reactions
