@@ -113,13 +113,14 @@ function deleteOrphanFile(fileId: number): void {
 
 export function unsendMessage(
   id: number,
-  username: string
+  username: string,
+  options: { asAdmin?: boolean } = {}
 ): { message: MessageRecord } | { error: 'not_found' | 'forbidden' } {
   const existing = getMessageById(id);
   if (!existing) {
     return { error: 'not_found' };
   }
-  if (existing.sender !== username) {
+  if (existing.sender !== username && !options.asAdmin) {
     return { error: 'forbidden' };
   }
   if (existing.deleted_at) {

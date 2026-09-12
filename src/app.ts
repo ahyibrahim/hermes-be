@@ -21,10 +21,13 @@ import {
 import {
   addUserToGeneralRoom,
   createGroupRoom,
+  deleteGroupRoom,
   getOrCreateDmRoom,
+  getRoomBySlug,
   getUserById,
   getUserByUsername,
   hideRoom,
+  kickMember,
   lastMessagePreview,
   leaveRoom,
   listRoomsForUser,
@@ -32,6 +35,7 @@ import {
   markRoomRead,
   revealRoomMembers,
   setUserColor,
+  setUserRole,
   takenColors,
   unreadCount,
   addMembersToGroup,
@@ -45,6 +49,7 @@ import {
   registerUser,
   setAvatarFileId,
 } from './auth';
+import { can } from './authz';
 import { isUserColor, USER_COLOR_PALETTE } from './colors';
 import { getDb } from './database';
 import { deleteOtherSessions, deleteSession, findSessionUser } from './sessions';
@@ -752,7 +757,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       }
 
       const actor = getUserByUsername(actorName);
-      if (!actor || actor.role !== 'admin') {
+      if (!actor || !can(actor, 'user.password_reset')) {
         reply.code(403);
         return { error: 'admin required' };
       }
@@ -772,6 +777,51 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
   );
 
+  fastify.patch(
+    '/users/:username/role',
+    async (request: FastifyRequest<{ Params: { username: string } }>, reply) => {
+      const actorName = resolveUser(request, reply);
+      if (!actorName) {
+        return { error: 'authentication required' };
+      }
+
+      const actor = getUserByUsername(actorName);
+      if (!actor || !can(actor, 'role.set')) {
+        reply.code(403);
+        return { error: 'admin required' };
+      }
+
+      const body = request.body as { role?: unknown };
+      if (body.role !== 'admin' && body.role !== 'member') {
+        reply.code(400);
+        return { error: 'role must be admin or member' };
+      }
+
+      const result = setUserRole(request.params.username, body.role);
+      if ('error' in result) {
+        if (result.error === 'not_found') {
+          reply.code(404);
+          return { error: 'user not found' };
+        }
+        if (result.error === 'system_user') {
+          reply.code(400);
+          return { error: 'cannot change a system user role' };
+        }
+        reply.code(400);
+        return { error: 'cannot demote the last admin' };
+      }
+
+      for (const name of onlineUsernames()) {
+        sendToUser(name, { type: 'user_updated', user: result });
+      }
+      request.log.info(
+        { event: 'role_set', actor: actorName, username: result.username, role: result.role },
+        'user role updated'
+      );
+      return result;
+    }
+  );
+
   fastify.get('/rooms', async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
@@ -788,6 +838,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         name: room.name,
         type: room.type,
         created_at: room.created_at,
+        creator_id: room.creator_id,
         members,
         unread_count: me ? unreadCount(me.id, room.slug) : 0,
         last_message: lastMessagePreview(room.slug),
@@ -936,6 +987,114 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return result.room;
   });
 
+  fastify.post('/rooms/kick', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const actor = getUserByUsername(username);
+    if (!actor) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+
+    const body = request.body as { room?: string; userId?: unknown };
+    const slug = normalizeRoomSlug(body.room);
+    if (!slug) {
+      reply.code(400);
+      return { error: 'room is required' };
+    }
+    if (typeof body.userId !== 'number' || !Number.isInteger(body.userId)) {
+      reply.code(400);
+      return { error: 'userId is required' };
+    }
+
+    const room = getRoomBySlug(slug);
+    if (!room) {
+      reply.code(404);
+      return { error: 'room not found' };
+    }
+    if (!can(actor, 'room.kick', { room })) {
+      reply.code(403);
+      return { error: 'forbidden' };
+    }
+    if (body.userId === actor.id) {
+      reply.code(400);
+      return { error: 'cannot kick yourself' };
+    }
+
+    const result = kickMember(slug, body.userId);
+    if ('error' in result) {
+      reply.code(result.status);
+      return { error: result.error };
+    }
+
+    const members = listRoomMembers(slug);
+    const payload = {
+      type: 'member_removed',
+      room: slug,
+      removed_by: username,
+      users: [result.removed],
+      members,
+    };
+    broadcastToMembers(slug, payload);
+    sendToUser(result.removed, payload);
+    request.log.info(
+      { event: 'member_kick', user: username, room: slug, removed: result.removed },
+      'kicked member from group'
+    );
+    return result.room;
+  });
+
+  fastify.delete(
+    '/rooms/:slug',
+    async (request: FastifyRequest<{ Params: { slug: string } }>, reply) => {
+      const username = resolveUser(request, reply);
+      if (!username) {
+        return { error: 'authentication required' };
+      }
+
+      const actor = getUserByUsername(username);
+      if (!actor) {
+        reply.code(401);
+        return { error: 'authentication required' };
+      }
+
+      const slug = normalizeRoomSlug(request.params.slug);
+      if (!slug) {
+        reply.code(400);
+        return { error: 'room is required' };
+      }
+
+      const room = getRoomBySlug(slug);
+      if (!room) {
+        reply.code(404);
+        return { error: 'room not found' };
+      }
+      if (!can(actor, 'room.delete', { room })) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const result = deleteGroupRoom(slug);
+      if ('error' in result) {
+        reply.code(result.status);
+        return { error: result.error };
+      }
+
+      const payload = { type: 'room_deleted', room: result.slug };
+      for (const member of result.members) {
+        sendToUser(member, payload);
+      }
+      for (const filePath of result.filePaths) {
+        fs.rmSync(filePath, { force: true });
+      }
+      request.log.info({ event: 'room_delete', user: username, room: result.slug }, 'deleted group room');
+      return { ok: true, room: result.slug };
+    }
+  );
+
   fastify.post('/rooms/read', async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
@@ -1042,10 +1201,17 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       return { error: 'id is required' };
     }
 
-    const result = unsendMessage(id, username);
+    const actor = getUserByUsername(username);
+    const asAdmin = Boolean(actor && can(actor, 'message.admin_delete'));
+    const result = unsendMessage(id, username, { asAdmin });
     if ('error' in result) {
       reply.code(result.error === 'not_found' ? 404 : 403);
-      return { error: result.error === 'not_found' ? 'message not found' : 'only the sender can unsend' };
+      return {
+        error:
+          result.error === 'not_found'
+            ? 'message not found'
+            : 'only the sender or an admin can delete',
+      };
     }
 
     broadcastToMembers(result.message.room, { type: 'message_deleted', message: result.message });
