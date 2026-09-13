@@ -37,7 +37,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.16.0 - Quiet header (live on `p1`)
 - [x] v0.17.0 - Touch and transcript (live on `p1`)
 - [x] v0.18.0 - Rails and call (live on `p1`)
-- [ ] v0.19.0 - Roles and moderation
+- [x] v0.19.0 - Roles and moderation (live on `p1`)
 - [ ] v0.20.0 - Watch together (YouTube)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
