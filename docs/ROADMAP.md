@@ -38,7 +38,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.17.0 - Touch and transcript (live on `p1`)
 - [x] v0.18.0 - Rails and call (live on `p1`)
 - [x] v0.19.0 - Roles and moderation (live on `p1`)
-- [x] v0.20.0 - Watch together (YouTube) (tagged; deploy when ready)
+- [x] v0.20.0 - Watch together (YouTube) (live on `p1`)
 - [ ] v0.21.0 - Watch polish and alone timeouts
 - [ ] v0.22.0 - Typing indicators
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
@@ -1038,8 +1038,8 @@ minutes alone; and see a watch session end after thirty minutes alone.
 
 ### Locked
 
-- Watch CTA and overlay End/Leave use `IconGlyph` / `IconButton` (accessible
-  labels retained).
+- Watch CTA: capsule under the YouTube link (icon + label). Banner Open
+  uses the same watch glyph; End uses close (X); Leave uses leave.
 - New watch sessions: `playing: false` at create.
 - Alone = participant count is exactly 1. Timer cancels when a second person
   joins. No media-activity detector.
