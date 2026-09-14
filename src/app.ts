@@ -235,6 +235,8 @@ function unwrapSocket(connection: unknown): any {
 
 export const DEFAULT_CALL_ALONE_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_WATCH_ALONE_TIMEOUT_MS = 30 * 60 * 1000;
+/** Clear stale typing indicators if the client goes quiet. */
+export const DEFAULT_TYPING_TIMEOUT_MS = 5_000;
 
 export type CreateAppOptions = {
   loggerDestination?: LogDestination;
@@ -243,6 +245,8 @@ export type CreateAppOptions = {
   callAloneTimeoutMs?: number;
   /** Override alone-watch auto-end (default 30 minutes). */
   watchAloneTimeoutMs?: number;
+  /** Override typing TTL (default 5 seconds). */
+  typingTimeoutMs?: number;
 };
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{
@@ -252,6 +256,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 }> {
   const callAloneTimeoutMs = options.callAloneTimeoutMs ?? DEFAULT_CALL_ALONE_TIMEOUT_MS;
   const watchAloneTimeoutMs = options.watchAloneTimeoutMs ?? DEFAULT_WATCH_ALONE_TIMEOUT_MS;
+  const typingTimeoutMs = options.typingTimeoutMs ?? DEFAULT_TYPING_TIMEOUT_MS;
   const fastify = Fastify({
     logger: buildLoggerConfig({
       destination: options.loggerDestination,
@@ -281,6 +286,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   const watchSessions = new Map<string, WatchSession>();
   const callAloneTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const watchAloneTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Active typers: room → user → TTL timer. */
+  const typingTimers = new Map<string, Map<string, ReturnType<typeof setTimeout>>>();
   const lastPong = new WeakMap<object, number>();
 
   getDb({
@@ -351,6 +358,64 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         );
       }, watchAloneTimeoutMs)
     );
+  }
+
+  function clearTypingTimer(room: string, username: string): void {
+    const byUser = typingTimers.get(room);
+    const timer = byUser?.get(username);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    byUser.delete(username);
+    if (byUser.size === 0) {
+      typingTimers.delete(room);
+    }
+  }
+
+  function stopTyping(room: string, username: string, broadcast = true): void {
+    const byUser = typingTimers.get(room);
+    if (!byUser?.has(username)) {
+      return;
+    }
+    clearTypingTimer(room, username);
+    if (broadcast) {
+      broadcastToMembers(room, { type: 'typing', room, user: username, active: false }, username);
+    }
+  }
+
+  function touchTyping(room: string, username: string): void {
+    const byUser = typingTimers.get(room) ?? new Map<string, ReturnType<typeof setTimeout>>();
+    if (!typingTimers.has(room)) {
+      typingTimers.set(room, byUser);
+    }
+    const wasTyping = byUser.has(username);
+    const existing = byUser.get(username);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    byUser.set(
+      username,
+      setTimeout(() => {
+        const roomTypers = typingTimers.get(room);
+        roomTypers?.delete(username);
+        if (roomTypers && roomTypers.size === 0) {
+          typingTimers.delete(room);
+        }
+        broadcastToMembers(room, { type: 'typing', room, user: username, active: false }, username);
+      }, typingTimeoutMs)
+    );
+    if (!wasTyping) {
+      broadcastToMembers(room, { type: 'typing', room, user: username, active: true }, username);
+    }
+  }
+
+  function clearTypingForUser(username: string): void {
+    for (const [room, byUser] of [...typingTimers.entries()]) {
+      if (byUser.has(username)) {
+        stopTyping(room, username);
+      }
+    }
   }
 
   fastify.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
@@ -622,6 +687,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       userSockets.delete(entry.user);
       leaveAllCalls(entry.user);
       leaveAllWatches(entry.user);
+      clearTypingForUser(entry.user);
     }
   }
 
@@ -2045,6 +2111,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               { event: 'watch_control', user, room: slug, action, videoId: session.videoId },
               'watch control'
             );
+            return;
+          }
+
+          if (payload.type === 'typing') {
+            if (!requireUser()) {
+              return;
+            }
+            const slug = normalizeRoomSlug(payload.room);
+            if (!slug) {
+              sendJson(socket, errorFrame('room is required'));
+              return;
+            }
+            if (!isRoomMember(slug, user)) {
+              sendJson(socket, errorFrame('not a member of that room'));
+              return;
+            }
+            const active = payload.active === true;
+            if (active) {
+              touchTyping(slug, user);
+            } else {
+              stopTyping(slug, user);
+            }
             return;
           }
 
