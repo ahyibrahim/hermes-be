@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.20.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.22.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -38,7 +38,9 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.17.0 - Touch and transcript (live on `p1`)
 - [x] v0.18.0 - Rails and call (live on `p1`)
 - [x] v0.19.0 - Roles and moderation (live on `p1`)
-- [ ] v0.20.0 - Watch together (YouTube)
+- [x] v0.20.0 - Watch together (YouTube) (tagged; deploy when ready)
+- [ ] v0.21.0 - Watch polish and alone timeouts
+- [ ] v0.22.0 - Typing indicators
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1024,6 +1026,70 @@ a short `hermes` system line when a session starts (and optionally ends).
   coexistence,
   [fe#136](https://github.com/ahyibrahim/hermes-fe/issues/136) watch SFX)
 
+## v0.21.0 - Watch polish and alone timeouts
+
+Short follow-up to v0.20. Icons for watch chrome, sessions start paused, and
+alone participants do not hold a call or watch open forever.
+
+After this release a friend should: tap a Watch together control that has an
+icon; end or leave a watch session with icon buttons; join a new session that
+starts paused until someone plays; be dropped from a voice call after ten
+minutes alone; and see a watch session end after thirty minutes alone.
+
+### Locked
+
+- Watch CTA and overlay End/Leave use `IconGlyph` / `IconButton` (accessible
+  labels retained).
+- New watch sessions: `playing: false` at create.
+- Alone = participant count is exactly 1. Timer cancels when a second person
+  joins. No media-activity detector.
+- Voice call alone timeout: **10 minutes** → remove the lone caller (same
+  leave path).
+- Watch alone timeout: **30 minutes** → end the session (`watch_ended` +
+  system line).
+- Timeouts overridable in tests via `createApp` options.
+- Web only for icon work. Bump `package.json` when ready to deploy.
+  Announcement in `docs/announcements/v0.21.0.md`.
+
+### Backend
+
+- [be#84](https://github.com/ahyibrahim/hermes-be/issues/84) start paused
+- [be#85](https://github.com/ahyibrahim/hermes-be/issues/85) alone timeouts
+
+### Web
+
+- [fe#140](https://github.com/ahyibrahim/hermes-fe/issues/140) watch CTA and
+  End/Leave icons
+
+## v0.22.0 - Typing indicators
+
+Show who is typing in the current room. Protocol + web UI only; search, read
+receipts, and reactions stay on the backlog.
+
+After this release a friend should: see an animated typing indicator while
+someone else is composing in the same room, and have it clear when they send,
+stop, or go idle.
+
+### Locked
+
+- WS frames for typing start/stop (or `typing` + `active`); broadcast to room
+  excluding sender; server TTL for stale state.
+- Composer debounce on the client; clear on send / blur / idle.
+- Animated dots (CSS); no new icon library.
+- No durable DB. CLI out.
+- Bump `package.json` when ready to deploy. Announcement in
+  `docs/announcements/v0.22.0.md`.
+
+### Backend
+
+- [be#86](https://github.com/ahyibrahim/hermes-be/issues/86) typing WS
+  protocol
+
+### Web
+
+- [fe#141](https://github.com/ahyibrahim/hermes-fe/issues/141) animated
+  typing UI (+ core session wiring)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -1044,4 +1110,4 @@ label until then.
 - Camera video in the call drawer. Same mesh as v0.13.0 screen share;
   different UI (always-on tiles vs opt-in preview)
 - Watch together: non-YouTube providers (Twitch, Vimeo, …) after v0.20.0
-- Search, read receipts, typing indicators, reactions
+- Search, read receipts, reactions (typing moved to v0.22.0)
