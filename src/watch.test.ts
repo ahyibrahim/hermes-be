@@ -135,7 +135,7 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
     assert.equal(bobState.videoId, VIDEO_ID);
     assert.equal(bobState.url, WATCH_URL);
     assert.equal(bobState.host, 'bob');
-    assert.equal(bobState.playing, true);
+    assert.equal(bobState.playing, false);
     assert.equal(bobState.provider, 'youtube');
     assert.deepEqual(bobState.users, ['bob']);
 

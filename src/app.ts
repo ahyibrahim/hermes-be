@@ -233,9 +233,16 @@ function unwrapSocket(connection: unknown): any {
   return connection;
 }
 
+export const DEFAULT_CALL_ALONE_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_WATCH_ALONE_TIMEOUT_MS = 30 * 60 * 1000;
+
 export type CreateAppOptions = {
   loggerDestination?: LogDestination;
   logLevel?: string;
+  /** Override alone-call auto-leave (default 10 minutes). */
+  callAloneTimeoutMs?: number;
+  /** Override alone-watch auto-end (default 30 minutes). */
+  watchAloneTimeoutMs?: number;
 };
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{
@@ -243,6 +250,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   roomClients: Map<string, Set<RoomSocket>>;
   callMembers: Map<string, Set<string>>;
 }> {
+  const callAloneTimeoutMs = options.callAloneTimeoutMs ?? DEFAULT_CALL_ALONE_TIMEOUT_MS;
+  const watchAloneTimeoutMs = options.watchAloneTimeoutMs ?? DEFAULT_WATCH_ALONE_TIMEOUT_MS;
   const fastify = Fastify({
     logger: buildLoggerConfig({
       destination: options.loggerDestination,
@@ -270,6 +279,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     participants: Set<string>;
   };
   const watchSessions = new Map<string, WatchSession>();
+  const callAloneTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const watchAloneTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const lastPong = new WeakMap<object, number>();
 
   getDb({
@@ -277,6 +288,70 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       fastify.log.info(obj, msg ?? '');
     },
   });
+
+  function clearCallAloneTimer(room: string): void {
+    const timer = callAloneTimers.get(room);
+    if (timer) {
+      clearTimeout(timer);
+      callAloneTimers.delete(room);
+    }
+  }
+
+  function touchCallAloneTimer(room: string): void {
+    clearCallAloneTimer(room);
+    const members = callMembers.get(room);
+    if (!members || members.size !== 1) {
+      return;
+    }
+    const alone = [...members][0];
+    callAloneTimers.set(
+      room,
+      setTimeout(() => {
+        callAloneTimers.delete(room);
+        const current = callMembers.get(room);
+        if (!current || current.size !== 1 || !current.has(alone)) {
+          return;
+        }
+        removeFromCall(room, alone, true);
+        fastify.log.info(
+          { event: 'call_alone_timeout', user: alone, room },
+          'ended alone call after timeout'
+        );
+      }, callAloneTimeoutMs)
+    );
+  }
+
+  function clearWatchAloneTimer(room: string): void {
+    const timer = watchAloneTimers.get(room);
+    if (timer) {
+      clearTimeout(timer);
+      watchAloneTimers.delete(room);
+    }
+  }
+
+  function touchWatchAloneTimer(room: string): void {
+    clearWatchAloneTimer(room);
+    const session = watchSessions.get(room);
+    if (!session || session.participants.size !== 1) {
+      return;
+    }
+    const alone = [...session.participants][0];
+    watchAloneTimers.set(
+      room,
+      setTimeout(() => {
+        watchAloneTimers.delete(room);
+        const current = watchSessions.get(room);
+        if (!current || current.participants.size !== 1 || !current.participants.has(alone)) {
+          return;
+        }
+        endWatchSession(room, alone);
+        fastify.log.info(
+          { event: 'watch_alone_timeout', user: alone, room },
+          'ended alone watch after timeout'
+        );
+      }, watchAloneTimeoutMs)
+    );
+  }
 
   fastify.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
     const statusCode = error.statusCode ?? 500;
@@ -424,6 +499,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     if (members.size === 0) {
       callMembers.delete(room);
       callSharing.delete(room);
+      clearCallAloneTimer(room);
+    } else {
+      touchCallAloneTimer(room);
     }
 
     broadcastCall(room, { type: 'user_left_call', room, user: username });
@@ -492,6 +570,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     if (!watchSessions.has(room)) {
       return;
     }
+    clearWatchAloneTimer(room);
     watchSessions.delete(room);
     broadcastToMembers(room, { type: 'watch_ended', room, user: endedBy });
     postWatchSystemLine(room, 'Watch together ended');
@@ -509,6 +588,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       sendToUser(username, { type: 'left_watch', room });
     }
     broadcastWatch(room, watchPeersPayload(session));
+    touchWatchAloneTimer(room);
   }
 
   function leaveAllWatches(username: string): void {
@@ -1642,6 +1722,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               broadcastCall(slug, { type: 'user_joined_call', room: slug, user }, user);
               request.log.info({ event: 'call_join', user, room: slug }, 'joined call');
             }
+            touchCallAloneTimer(slug);
             return;
           }
 
@@ -1782,6 +1863,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               existing.participants.add(user);
               sendToUser(user, { type: 'watch_state', ...watchSnapshot(existing) });
               broadcastWatch(slug, watchPeersPayload(existing));
+              touchWatchAloneTimer(slug);
               request.log.info(
                 { event: 'watch_join', user, room: slug, videoId: existing.videoId },
                 'joined existing watch session'
@@ -1804,13 +1886,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
               videoId,
               url,
               host: user,
-              playing: true,
+              playing: false,
               position: 0,
               rate: 1,
               updatedAt: now,
               participants: new Set([user]),
             };
             watchSessions.set(slug, session);
+            touchWatchAloneTimer(slug);
 
             const snapshot = watchSnapshot(session);
             broadcastToMembers(slug, { type: 'watch_started', ...snapshot, user }, user);
@@ -1849,6 +1932,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
             session.participants.add(user);
             sendToUser(user, { type: 'watch_state', ...watchSnapshot(session) });
             broadcastWatch(slug, watchPeersPayload(session));
+            touchWatchAloneTimer(slug);
             request.log.info(
               { event: 'watch_join', user, room: slug, videoId: session.videoId },
               'joined watch session'
