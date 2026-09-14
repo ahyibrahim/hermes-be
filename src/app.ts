@@ -363,7 +363,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   function clearTypingTimer(room: string, username: string): void {
     const byUser = typingTimers.get(room);
     const timer = byUser?.get(username);
-    if (!timer) {
+    if (!byUser || !timer) {
       return;
     }
     clearTimeout(timer);
