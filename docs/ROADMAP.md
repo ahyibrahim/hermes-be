@@ -40,7 +40,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.19.0 - Roles and moderation (live on `p1`)
 - [x] v0.20.0 - Watch together (YouTube) (live on `p1`)
 - [x] v0.21.0 - Watch polish and alone timeouts (live on `p1`)
-- [ ] v0.22.0 - Typing indicators
+- [x] v0.22.0 - Typing indicators (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
