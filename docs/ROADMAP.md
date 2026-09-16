@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.22.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.23.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -41,6 +41,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.20.0 - Watch together (YouTube) (live on `p1`)
 - [x] v0.21.0 - Watch polish and alone timeouts (live on `p1`)
 - [x] v0.22.0 - Typing indicators (live on `p1`)
+- [ ] v0.23.0 - Previews and transcript polish
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1089,6 +1090,52 @@ stop, or go idle.
 
 - [fe#141](https://github.com/ahyibrahim/hermes-fe/issues/141) animated
   typing UI (+ core session wiring)
+
+## v0.23.0 - Previews and transcript polish
+
+Web-first chat surface pass after typing. Link cards for pasted URLs, in-chat
+`.md` attachment preview, quieter code fences, and a download fix for macOS
+screenshot filenames. Not lists/strike in the composer, not search/receipts/
+reactions, not camera.
+
+After this release a friend should: paste a link and see a quiet title/site/
+image card; attach a `.md` file and skim it without leaving chat; copy from a
+rounded fence whose control sits in a header strip; upload a macOS screenshot
+and get a working preview and download.
+
+### Locked
+
+- **Link previews.** Server fetches Open Graph / Twitter-card metadata for
+  `http(s)` URLs. SSRF-safe (block private/link-local, timeouts, size cap,
+  careful redirects). Cache metadata (in-memory fine for v1). Fail soft.
+  FE shows a card under each `url` part. YouTube keeps Watch together; the
+  card must not fight that CTA.
+- **`.md` attachments.** FE-only: sniff `.md` / `text/markdown`, fetch
+  `GET /files/:id`, render sanitized markdown, keep Download, size-cap or
+  truncate large files. No new endpoint.
+- **Code fences.** Rounder corners; Copy inside a thin header strip (not over
+  the code). Optional language chip when the fence has a tag; fade Copy until
+  hover on desktop, always on touch. Soft max-height is nice-to-have.
+- **Non-ASCII download fix.** ASCII `filename` + RFC 5987 `filename*`; treat
+  image-by-extension like mime for `inline`. Regression with U+202F in the
+  name ([be#92](https://github.com/ahyibrahim/hermes-be/issues/92)).
+- Web only for preview UI. CLI unchanged. No `s1`. Bump `package.json` when
+  ready to deploy. Announcement in `docs/announcements/v0.23.0.md`.
+
+### Backend
+
+- [be#93](https://github.com/ahyibrahim/hermes-be/issues/93) link preview
+  metadata (OG fetch + cache)
+- [be#92](https://github.com/ahyibrahim/hermes-be/issues/92) Content-Disposition
+  non-ASCII filename 500
+
+### Web
+
+- [fe#145](https://github.com/ahyibrahim/hermes-fe/issues/145) link preview
+  cards
+- [fe#146](https://github.com/ahyibrahim/hermes-fe/issues/146) `.md` attachment
+  preview
+- [fe#147](https://github.com/ahyibrahim/hermes-fe/issues/147) code fence chrome
 
 ## Backlog (unscheduled)
 
