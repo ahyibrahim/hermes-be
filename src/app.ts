@@ -57,6 +57,8 @@ import { buildInfo } from './build-info';
 import { buildLoggerConfig, type LogDestination } from './logger';
 import { SYSTEM_USERNAME } from './system-user';
 import { normalizeYouTubeUrl, parseYouTubeVideoId } from './youtube';
+import { buildContentDisposition, isImageFile } from './content-disposition';
+import { createLinkPreviewService, type LinkPreviewService } from './link-preview';
 
 type RoomSocket = {
   socket: { readyState: number; send: (data: string) => void; ping?: () => void; terminate?: () => void };
@@ -247,6 +249,8 @@ export type CreateAppOptions = {
   watchAloneTimeoutMs?: number;
   /** Override typing TTL (default 5 seconds). */
   typingTimeoutMs?: number;
+  /** Override link-preview service (tests). */
+  linkPreview?: LinkPreviewService;
 };
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{
@@ -257,6 +261,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   const callAloneTimeoutMs = options.callAloneTimeoutMs ?? DEFAULT_CALL_ALONE_TIMEOUT_MS;
   const watchAloneTimeoutMs = options.watchAloneTimeoutMs ?? DEFAULT_WATCH_ALONE_TIMEOUT_MS;
   const typingTimeoutMs = options.typingTimeoutMs ?? DEFAULT_TYPING_TIMEOUT_MS;
+  const linkPreview = options.linkPreview ?? createLinkPreviewService();
   const fastify = Fastify({
     logger: buildLoggerConfig({
       destination: options.loggerDestination,
@@ -1567,10 +1572,28 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     }
 
     reply.header('Content-Type', file.mime);
-    const image = file.mime.toLowerCase().startsWith('image/');
-    const safeName = file.original_name.replace(/"/g, '');
-    reply.header('Content-Disposition', image ? 'inline' : `attachment; filename="${safeName}"`);
+    const image = isImageFile(file.mime, file.original_name);
+    reply.header(
+      'Content-Disposition',
+      buildContentDisposition(image ? 'inline' : 'attachment', file.original_name)
+    );
     return reply.send(fs.createReadStream(file.path));
+  });
+
+  fastify.get('/link-preview', async (request: FastifyRequest<{ Querystring: { url?: string } }>, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const raw = typeof request.query.url === 'string' ? request.query.url : '';
+    if (!raw.trim()) {
+      reply.code(400);
+      return { error: 'url is required' };
+    }
+
+    const preview = await linkPreview.getPreview(raw);
+    return { preview };
   });
 
   fastify.get(
