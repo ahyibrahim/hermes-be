@@ -137,6 +137,29 @@ test('file upload, download, and live room broadcast', async () => {
     const bytes = Buffer.from(await downloaded.arrayBuffer());
     assert.deepEqual(bytes, payload);
 
+    // Non-ASCII original_name (macOS U+202F before am/pm) must not 500 the download.
+    const narrow = 'Screenshot 2026-09-16 at 3.08.06\u202Fpm.jpg';
+    const imgForm = new FormData();
+    imgForm.append('room', share.slug);
+    imgForm.append('file', new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xd9])], { type: 'application/octet-stream' }), narrow);
+    const imgUpload = await fetch(`${origin}/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${alice.token}` },
+      body: imgForm,
+    });
+    assert.equal(imgUpload.status, 200);
+    const imgBody = (await imgUpload.json()) as { file: { id: number; original_name: string } };
+    assert.equal(imgBody.file.original_name, narrow);
+    const imgDl = await fetch(`${origin}/files/${imgBody.file.id}`, {
+      headers: { Authorization: `Bearer ${bob.token}` },
+    });
+    assert.equal(imgDl.status, 200);
+    const disposition = imgDl.headers.get('content-disposition') ?? '';
+    assert.match(disposition, /^inline;/);
+    assert.match(disposition, /filename="[\x20-\x7E]+"/);
+    assert.match(disposition, /filename\*=UTF-8''/);
+    assert.match(disposition, /^[\x20-\x7E]+$/);
+
     a.socket.close();
     b.socket.close();
   } finally {
