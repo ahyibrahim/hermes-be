@@ -23,7 +23,7 @@ export interface AuthSession {
   expires_at: string;
 }
 
-const ARGON2_OPTIONS: argon2.Options = {
+const ARGON2_OPTIONS: argon2.HashOptions = {
   type: argon2.argon2id,
   memoryCost: 19456,
   timeCost: 2,
