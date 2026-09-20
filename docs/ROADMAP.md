@@ -42,6 +42,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.21.0 - Watch polish and alone timeouts (live on `p1`)
 - [x] v0.22.0 - Typing indicators (live on `p1`)
 - [x] v0.23.0 - Previews and transcript polish (live on `p1`)
+- [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1136,6 +1137,32 @@ and get a working preview and download.
 - [fe#146](https://github.com/ahyibrahim/hermes-fe/issues/146) `.md` attachment
   preview
 - [fe#147](https://github.com/ahyibrahim/hermes-fe/issues/147) code fence chrome
+
+## v0.24.0 - Fluid UI and interaction overhaul
+
+Comprehensive web interface overhaul eliminating visual friction, layout thrashing, and mobile responsiveness defects.
+
+After this release a friend should: experience seamless room switches without blank transcript flashes; see messages arrive with subtle physics-based entry animations and stable scroll pinning; enjoy async skeleton settling for media and link preview cards; transfer files via full-chat drag-and-drop with rich pre-send preview chips; navigate auth and profile views with native View Transitions; and open side rails on phone viewports as full-bleed overlay drawers without transcript text crushing.
+
+### Locked
+
+- **Motion & tokens.** System motion design tokens (`--motion-duration-*`, `--ease-*`) across the web UI; respectful reduced-motion overrides (`prefers-reduced-motion: reduce`).
+- **Transcript dual-buffering.** Keep outgoing room transcript rendered during room switches until the incoming room completes its initial fetch, avoiding blank DOM flashes.
+- **Message physics & scroll pinning.** Velocity-aware message enter animations; smooth transcript anchoring during dynamic element mounting and media loading.
+- **Async layout stabilization.** Skeleton-to-content settle for links and media cards; smooth composer expansion easing; non-intrusive compact call invite toasts.
+- **File transfers & ergonomics.** Full-transcript drag-and-drop file target overlay; rich attachment preview chip with file thumbnails, byte size, and removal action above composer.
+- **View transitions & mobile drawers.** View Transitions for `/login`, `/register`, and `/profile`; full-bleed overlay drawers on phone viewports (`< 48rem`) with backdrop dismissal.
+- Web-focused milestone with shared `@hermes/core` version alignment. CLI unchanged. Bump `package.json` when ready to deploy. Announcement in `docs/announcements/v0.24.0.md`.
+
+### Web
+
+- [fe#150](https://github.com/ahyibrahim/hermes-fe/issues/150) Fluid UI overhaul (epic)
+- [fe#151](https://github.com/ahyibrahim/hermes-fe/issues/151) Motion design tokens & overlay transitions (Release A)
+- [fe#152](https://github.com/ahyibrahim/hermes-fe/issues/152) Dual-buffered room switching (Release B)
+- [fe#153](https://github.com/ahyibrahim/hermes-fe/issues/153) Message enter physics & scroll pinning (Release C)
+- [fe#154](https://github.com/ahyibrahim/hermes-fe/issues/154) Async layout stabilization & call toast (Release D)
+- [fe#155](https://github.com/ahyibrahim/hermes-fe/issues/155) Drag-and-drop & attachment UX (Release F)
+- [fe#156](https://github.com/ahyibrahim/hermes-fe/issues/156) View transitions & mobile overlay drawers (Release E)
 
 ## Backlog (unscheduled)
 

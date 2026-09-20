@@ -23,7 +23,7 @@ export interface AuthSession {
   expires_at: string;
 }
 
-const ARGON2_OPTIONS: argon2.HashOptions = {
+const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
   memoryCost: 19456,
   timeCost: 2,
@@ -38,7 +38,7 @@ function looksLikeArgon2(stored: string): boolean {
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, { ...ARGON2_OPTIONS, raw: false });
+  return argon2.hash(password, ARGON2_OPTIONS);
 }
 
 async function passwordMatches(stored: string, password: string): Promise<boolean> {
