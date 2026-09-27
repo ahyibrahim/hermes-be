@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.25.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.26.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -43,7 +43,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.22.0 - Typing indicators (live on `p1`)
 - [x] v0.23.0 - Previews and transcript polish (live on `p1`)
 - [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
-- [ ] v0.25.0 - Maintainability hardening
+- [x] v0.25.0 - Maintainability hardening (live on `p1`)
+- [ ] v0.26.0 - Safety net and phone rails
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1216,6 +1217,56 @@ half-open connections.
 - [fe#152](https://github.com/ahyibrahim/hermes-fe/issues/152) scoped CSS
   (deferred)
 
+## v0.26.0 - Safety net and phone rails
+
+Close the unauthenticated-sender hole, add the web UI tests v0.25 was missing,
+then slim `ChatShell` behind them. Small phone rail ergonomics and markdown
+lists ride along so friends see something new.
+
+After this release a friend should: open a phone rail by tapping anywhere on
+the collapsed strip, with the chevron centered on it; write bulleted and
+numbered lists and ~~strikethrough~~; not notice anything else changed.
+
+### Locked
+
+- **Session-only authorship.** Remove the unauthenticated `body.sender`
+  fallback on `POST /messages`; update `restart.test.ts` to post with a token.
+- **Web UI tests.** Tests that mount `ChatShell` against the core fake backend
+  and cover at least: a DM from an unknown room appears live with unread; a
+  message during a room switch is kept; phone rail open/close. Wired into CI.
+- **WebSocket close race.** Reproduce the `closedByUs` race in
+  `packages/core/src/ws.ts` with a test first, then fix.
+- **ChatShell slim-down.** Move session listeners, room switching, and scroll
+  pinning out of `ChatShell.svelte` into modules, in small steps, each green.
+  **Cut line:** starts only after the web UI tests are merged; if those run
+  long, this moves to v0.27.0 rather than landing untested.
+- **Message ID cap.** Bound `displayedMessageIds` in `session.ts`.
+- **Phone rails.** On phone, the whole collapsed rail is the open control, and
+  its chevron is vertically centered. Open drawers keep the chevron in the
+  header. Fix the open drawer jumping into the grid when widening from phone.
+  Desktop unchanged.
+- **Markdown lists and strike.** `-`/`*` and `1.` lists, `~~strike~~` in
+  `packages/core/src/message-body.ts`. No composer toolbar.
+- Not in scope: scoped CSS (fe#152), backend `RouteContext` cleanup, settings
+  menu, camera, sound pack. Announcement in `docs/announcements/v0.26.0.md`.
+
+### Backend
+
+- [be#97](https://github.com/ahyibrahim/hermes-be/issues/97) remove the
+  `body.sender` fallback
+
+### Web
+
+- [fe#156](https://github.com/ahyibrahim/hermes-fe/issues/156) web UI tests in
+  CI (this release: UI tests only; coverage/lint/audit can follow)
+- [fe#153](https://github.com/ahyibrahim/hermes-fe/issues/153) `closedByUs` race
+- [fe#155](https://github.com/ahyibrahim/hermes-fe/issues/155) cap
+  `displayedMessageIds`
+- `ChatShell` slim-down (issue to file, under
+  [fe#150](https://github.com/ahyibrahim/hermes-fe/issues/150))
+- Phone rail tap target and drawer jump (issue to file)
+- Markdown lists and strikethrough (issue to file)
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -1228,8 +1279,6 @@ label until then.
 - App settings menu
   ([fe#88](https://github.com/ahyibrahim/hermes-fe/issues/88)
   ([fe#89](https://github.com/ahyibrahim/hermes-fe/issues/89)))
-- More markdown (lists, strike). Autolink moved to v0.17.0; v0.10 locked
-  inline `code` plus emphasis. No composer markdown toggle.
 - File-upload hardening ([be#38](https://github.com/ahyibrahim/hermes-be/issues/38))
 - Deploy automation, blocked on a private hermes-be
   ([be#35](https://github.com/ahyibrahim/hermes-be/issues/35), be#15–#20, fe#16)
