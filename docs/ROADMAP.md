@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.23.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.25.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -43,6 +43,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.22.0 - Typing indicators (live on `p1`)
 - [x] v0.23.0 - Previews and transcript polish (live on `p1`)
 - [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
+- [ ] v0.25.0 - Maintainability hardening
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1156,13 +1157,64 @@ After this release a friend should: experience seamless room switches without bl
 
 ### Web
 
-- [fe#150](https://github.com/ahyibrahim/hermes-fe/issues/150) Fluid UI overhaul (epic)
-- [fe#151](https://github.com/ahyibrahim/hermes-fe/issues/151) Motion design tokens & overlay transitions (Release A)
-- [fe#152](https://github.com/ahyibrahim/hermes-fe/issues/152) Dual-buffered room switching (Release B)
-- [fe#153](https://github.com/ahyibrahim/hermes-fe/issues/153) Message enter physics & scroll pinning (Release C)
-- [fe#154](https://github.com/ahyibrahim/hermes-fe/issues/154) Async layout stabilization & call toast (Release D)
-- [fe#155](https://github.com/ahyibrahim/hermes-fe/issues/155) Drag-and-drop & attachment UX (Release F)
-- [fe#156](https://github.com/ahyibrahim/hermes-fe/issues/156) View transitions & mobile overlay drawers (Release E)
+Landed as commits on `main` (fluid-a through fluid-f) with no tracking issues.
+The fe#150–fe#156 numbers once listed here are the code-quality backlog, not
+this release.
+
+## v0.25.0 - Maintainability hardening
+
+Structure and safety, not features. Split the two monoliths, validate input,
+harden SQLite and shutdown, and fix the regressions and races found on the way.
+
+After this release a friend should notice: a new DM appears live instead of
+after a refresh; messages sent while a room loads are not lost; side rails slide
+instead of snapping when the window narrows and on phones; restarts do not leave
+half-open connections.
+
+### Locked
+
+- **Route modules.** `src/app.ts` split into Fastify plugins under
+  `src/routes/` plus `src/ws/handler.ts`. The empty `calls` placeholder is gone.
+- **Validation.** Zod schemas in `src/schemas/` on write and query routes.
+  Room `members` stays lenient (non-integers ignored, as before).
+- **Authorship.** Authenticated requests take the sender from the session. The
+  unauthenticated `body.sender` fallback on `POST /messages` stays for now
+  (a restart test depends on it); removing it is be#97, still open.
+- **SQLite.** WAL plus `busy_timeout = 5000`; `closeDb` checkpoints the WAL so a
+  stopped `hermes.db` is a complete copy. While running, back up with the
+  `-wal` file or `sqlite3 .backup`.
+- **Shutdown.** SIGTERM/SIGINT close WebSockets with 1001, close Fastify, then
+  the database. A second signal falls through to Node's default.
+- **ChatShell split.** Markup moved into `SideRailDrawer`, `TranscriptView`,
+  `Composer` and `CallOverlay`; state and session wiring stay in `ChatShell`.
+  The split first rewrote and dropped `ChatShell` logic (room activity, member
+  and room events, notifications); the v0.24 script was restored.
+- **Styles.** Component-scoped CSS is deferred (fe#152). Copied style blocks
+  drifted from `app.css`, so components use the global sheet as in v0.24.
+- **Room-switch race.** Messages and deletes that arrive while history loads
+  are merged into it.
+- **Rails.** Phone layout is a `.shell.phone` class applied after open rails
+  slide shut; phone drawers slide on width.
+- Web and backend. CLI unchanged. Announcement in
+  `docs/announcements/v0.25.0.md`.
+
+### Backend
+
+- [be#106](https://github.com/ahyibrahim/hermes-be/issues/106) split `app.ts`
+- [be#100](https://github.com/ahyibrahim/hermes-be/issues/100) Zod validation
+- [be#109](https://github.com/ahyibrahim/hermes-be/issues/109) WAL and
+  `busy_timeout`
+- [be#112](https://github.com/ahyibrahim/hermes-be/issues/112) graceful shutdown
+- [be#97](https://github.com/ahyibrahim/hermes-be/issues/97) strip client
+  `sender` (partial; legacy fallback remains)
+
+### Web
+
+- [fe#151](https://github.com/ahyibrahim/hermes-fe/issues/151) split
+  `ChatShell.svelte`
+- [fe#154](https://github.com/ahyibrahim/hermes-fe/issues/154) `enterRoom` race
+- [fe#152](https://github.com/ahyibrahim/hermes-fe/issues/152) scoped CSS
+  (deferred)
 
 ## Backlog (unscheduled)
 

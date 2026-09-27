@@ -30,6 +30,8 @@ export function getDb(log?: SchemaLogger): SqliteDb {
 
   const db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
+  db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
   migrateSchema(db, log);
   handle = db;
   return handle;
@@ -40,6 +42,16 @@ export function getDb(log?: SchemaLogger): SqliteDb {
  * which is what a service restart does.
  */
 export function closeDb(): void {
-  handle?.close();
+  if (!handle) {
+    return;
+  }
+  try {
+    // Fold the WAL back into the main file so a copy of hermes.db after
+    // shutdown is a complete backup.
+    handle.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    // The handle can already be mid-close. Closing still releases it.
+  }
+  handle.close();
   handle = null;
 }

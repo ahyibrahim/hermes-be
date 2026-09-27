@@ -1,0 +1,407 @@
+import { FastifyInstance, FastifyRequest } from 'fastify';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
+import {
+  addUserToGeneralRoom,
+  getUserById,
+  getUserByUsername,
+  listUsers,
+  setUserColor,
+  setUserRole,
+  takenColors,
+} from '../rooms';
+import {
+  changePassword,
+  getProfile,
+  issuePasswordReset,
+  loginUser,
+  redeemPasswordReset,
+  registerUser,
+  setAvatarFileId,
+} from '../auth';
+import { can } from '../authz';
+import { isUserColor } from '../colors';
+import { deleteOtherSessions, deleteSession } from '../sessions';
+import { createFileRecord, getFileRecord } from '../db';
+import {
+  authRateLimitConfig,
+  AVATAR_TYPES,
+  extractToken,
+  parseIceServers,
+  resolveUser,
+  RouteContext,
+} from './common';
+import {
+  formatZodError,
+  idParamSchema,
+  loginSchema,
+  patchUserMeSchema,
+  registerSchema,
+  resetPasswordSchema,
+  usernameParamSchema,
+  userRoleBodySchema,
+} from '../schemas';
+
+export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
+  fastify.post(
+    '/auth/register',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
+      const parsed = registerSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const { username, password } = parsed.data;
+      try {
+        const user = await registerUser(username, password);
+        addUserToGeneralRoom(user.id);
+        return { user: { id: user.id, username: user.username, role: user.role, color: user.color } };
+      } catch (error) {
+        reply.code(409);
+        return { error: (error as Error).message };
+      }
+    }
+  );
+
+  fastify.post(
+    '/auth/login',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
+      const parsed = loginSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const { username, password } = parsed.data;
+      const session = await loginUser(username, password);
+      if (!session) {
+        request.log.info(
+          { event: 'login_failure', username: username.trim().toLowerCase() },
+          'login failed'
+        );
+        reply.code(401);
+        return { error: 'invalid credentials' };
+      }
+
+      request.log.info({ event: 'login_success', username: session.username }, 'login succeeded');
+      return session;
+    }
+  );
+
+  fastify.post(
+    '/auth/reset',
+    { config: { rateLimit: authRateLimitConfig() } },
+    async (request, reply) => {
+      const parsed = resetPasswordSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const { username, token, password } = parsed.data;
+      const session = await redeemPasswordReset(username, token, password);
+      if (!session) {
+        request.log.info(
+          { event: 'password_reset_failure', username: username.trim().toLowerCase() },
+          'password reset failed'
+        );
+        reply.code(401);
+        return { error: 'invalid reset token' };
+      }
+
+      request.log.info({ event: 'password_reset_success', username: session.username }, 'password reset redeemed');
+      return session;
+    }
+  );
+
+  fastify.post('/auth/logout', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    deleteSession(extractToken(request));
+    request.log.info({ event: 'logout', username }, 'logged out');
+    return { ok: true };
+  });
+
+  fastify.get('/users', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    return listUsers();
+  });
+
+  fastify.get('/users/online', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    return ctx.onlineUsernames();
+  });
+
+  fastify.get('/ice', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    return { iceServers: parseIceServers(process.env.HERMES_ICE_SERVERS) };
+  });
+
+  fastify.get('/users/me', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const profile = getProfile(username);
+    if (!profile) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+    return profile;
+  });
+
+  fastify.patch('/users/me', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const parsed = patchUserMeSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: formatZodError(parsed.error) };
+    }
+
+    const body = parsed.data;
+    if (typeof body.color === 'string') {
+      if (!isUserColor(body.color)) {
+        reply.code(400);
+        return { error: 'color is not in the palette' };
+      }
+      const me = getUserByUsername(username);
+      if (!me) {
+        reply.code(401);
+        return { error: 'authentication required' };
+      }
+      const taken = takenColors();
+      if (taken.has(body.color) && me.color !== body.color) {
+        reply.code(409);
+        return { error: 'color is taken' };
+      }
+      try {
+        setUserColor(me.id, body.color);
+      } catch (error) {
+        const message = String((error as Error).message);
+        if (message.includes('UNIQUE') && (message.includes('idx_users_color') || message.includes('users.color'))) {
+          reply.code(409);
+          return { error: 'color is taken' };
+        }
+        throw error;
+      }
+      const profile = getProfile(username);
+      if (profile) {
+        for (const name of ctx.onlineUsernames()) {
+          ctx.sendToUser(name, { type: 'user_updated', user: profile });
+        }
+      }
+      return profile;
+    }
+
+    if (!body.current_password || !body.password || !body.password.trim()) {
+      reply.code(400);
+      return { error: 'current_password and password are required' };
+    }
+
+    try {
+      const ok = await changePassword(username, body.current_password, body.password);
+      if (!ok) {
+        reply.code(401);
+        return { error: 'invalid credentials' };
+      }
+    } catch (error) {
+      reply.code(400);
+      return { error: (error as Error).message };
+    }
+
+    deleteOtherSessions(username, extractToken(request));
+    request.log.info({ event: 'password_change', username }, 'password changed');
+    return { ok: true };
+  });
+
+  fastify.post('/users/me/avatar', async (request, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const me = getUserByUsername(username);
+    if (!me) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+
+    const data = await request.file();
+    if (!data) {
+      reply.code(400);
+      return { error: 'file is required' };
+    }
+
+    const mime = data.mimetype || '';
+    if (!AVATAR_TYPES.has(mime)) {
+      data.file.resume();
+      reply.code(415);
+      return { error: 'avatar must be png, jpeg, webp, or gif' };
+    }
+
+    const storedName = `${crypto.randomUUID()}`;
+    const storedPath = path.join(ctx.filesDir, storedName);
+    await pipeline(data.file, fs.createWriteStream(storedPath));
+
+    if (data.file.truncated) {
+      fs.rmSync(storedPath, { force: true });
+      reply.code(413);
+      return { error: 'file too large' };
+    }
+
+    const size = fs.statSync(storedPath).size;
+    const file = createFileRecord(
+      `avatar:${username}`,
+      username,
+      data.filename || 'avatar',
+      mime,
+      size,
+      storedPath
+    );
+    setAvatarFileId(me.id, file.id);
+    request.log.info({ event: 'avatar_upload', user: username, id: file.id }, 'avatar uploaded');
+    return getProfile(username);
+  });
+
+  fastify.get('/users/:id/avatar', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    const username = resolveUser(request, reply);
+    if (!username) {
+      return { error: 'authentication required' };
+    }
+
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid user id' };
+    }
+
+    const id = parsed.data.id;
+    const user = getUserById(id);
+    if (!user?.avatar_file_id) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+
+    const file = getFileRecord(user.avatar_file_id);
+    if (!file || !fs.existsSync(file.path)) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+
+    reply.header('Content-Type', file.mime);
+    reply.header('Content-Disposition', 'inline');
+    return reply.send(fs.createReadStream(file.path));
+  });
+
+  fastify.post(
+    '/users/:username/password-reset',
+    async (request: FastifyRequest<{ Params: { username: string } }>, reply) => {
+      const actorName = resolveUser(request, reply);
+      if (!actorName) {
+        return { error: 'authentication required' };
+      }
+
+      const parsed = usernameParamSchema.safeParse(request.params);
+      if (!parsed.success) {
+        reply.code(400);
+        return { error: formatZodError(parsed.error) };
+      }
+
+      const targetUsername = parsed.data.username;
+      const actor = getUserByUsername(actorName);
+      if (!actor || !can(actor, 'user.password_reset')) {
+        reply.code(403);
+        return { error: 'admin required' };
+      }
+
+      const issued = issuePasswordReset(targetUsername);
+      if ('error' in issued) {
+        reply.code(404);
+        return { error: 'user not found' };
+      }
+
+      request.log.info(
+        { event: 'password_reset_issued', username: targetUsername.trim().toLowerCase() },
+        'password reset token issued'
+      );
+      reply.code(201);
+      return issued;
+    }
+  );
+
+  fastify.patch(
+    '/users/:username/role',
+    async (request: FastifyRequest<{ Params: { username: string } }>, reply) => {
+      const actorName = resolveUser(request, reply);
+      if (!actorName) {
+        return { error: 'authentication required' };
+      }
+
+      const parsedParams = usernameParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        reply.code(400);
+        return { error: formatZodError(parsedParams.error) };
+      }
+
+      const actor = getUserByUsername(actorName);
+      if (!actor || !can(actor, 'role.set')) {
+        reply.code(403);
+        return { error: 'admin required' };
+      }
+
+      const parsedBody = userRoleBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        reply.code(400);
+        return { error: formatZodError(parsedBody.error) };
+      }
+
+      const result = setUserRole(parsedParams.data.username, parsedBody.data.role);
+      if ('error' in result) {
+        if (result.error === 'not_found') {
+          reply.code(404);
+          return { error: 'user not found' };
+        }
+        if (result.error === 'system_user') {
+          reply.code(400);
+          return { error: 'cannot change a system user role' };
+        }
+        reply.code(400);
+        return { error: 'cannot demote the last admin' };
+      }
+
+      for (const name of ctx.onlineUsernames()) {
+        ctx.sendToUser(name, { type: 'user_updated', user: result });
+      }
+      request.log.info(
+        { event: 'role_set', actor: actorName, username: result.username, role: result.role },
+        'user role updated'
+      );
+      return result;
+    }
+  );
+}
