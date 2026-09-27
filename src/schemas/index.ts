@@ -77,8 +77,6 @@ export const listMessagesQuerySchema = z.object({
 export const createMessageSchema = z.object({
   room: reqStr('room and content are required'),
   content: reqStr('room and content are required'),
-  token: z.string().optional(),
-  sender: z.string().optional(),
 });
 
 export const deleteMessageParamSchema = z.object({

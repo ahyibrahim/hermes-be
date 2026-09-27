@@ -107,17 +107,44 @@ test('a login token still authenticates after the server restarts', async () => 
   }
 });
 
-test('the legacy body.sender fallback on POST /messages still works', async () => {
+test('POST /messages takes the sender from the session and rejects a bare body.sender', async () => {
   const instance = await boot();
   try {
-    const response = await fetch(`${instance.origin}/messages`, {
+    await fetch(`${instance.origin}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'poster', password: 'hunter2' }),
+    });
+    const login = await fetch(`${instance.origin}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'poster', password: 'hunter2' }),
+    });
+    assert.equal(login.status, 200);
+    const { token } = (await login.json()) as { token: string };
+
+    const authed = await fetch(`${instance.origin}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ room: 'general', sender: 'someone-else', content: 'with a token' }),
+    });
+    assert.equal(authed.status, 200);
+    const message = (await authed.json()) as { sender: string };
+    assert.equal(message.sender, 'poster');
+
+    const spoofed = await fetch(`${instance.origin}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ room: 'general', sender: 'legacy-cli', content: 'no token here' }),
     });
-    assert.equal(response.status, 200);
-    const message = (await response.json()) as { sender: string };
-    assert.equal(message.sender, 'legacy-cli');
+    assert.equal(spoofed.status, 401);
+
+    const history = await fetch(`${instance.origin}/messages?room=general`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const rows = (await history.json()) as Array<{ sender: string; content: string }>;
+    assert.equal(rows.some((row) => row.content === 'no token here'), false);
+    assert.equal(rows.some((row) => row.sender === 'legacy-cli'), false);
   } finally {
     await instance.app.close();
   }
