@@ -1229,18 +1229,23 @@ numbered lists and ~~strikethrough~~; not notice anything else changed.
 
 ### Locked
 
-- **Session-only authorship.** Remove the unauthenticated `body.sender`
-  fallback on `POST /messages`; update `restart.test.ts` to post with a token.
-- **Web UI tests.** Tests that mount `ChatShell` against the core fake backend
-  and cover at least: a DM from an unknown room appears live with unread; a
-  message during a room switch is kept; phone rail open/close. Wired into CI.
-- **WebSocket close race.** Reproduce the `closedByUs` race in
-  `packages/core/src/ws.ts` with a test first, then fix.
-- **ChatShell slim-down.** Move session listeners, room switching, and scroll
-  pinning out of `ChatShell.svelte` into modules, in small steps, each green.
-  **Cut line:** starts only after the web UI tests are merged; if those run
-  long, this moves to v0.27.0 rather than landing untested.
-- **Message ID cap.** Bound `displayedMessageIds` in `session.ts`.
+- **Session-only authorship.** `POST /messages` requires a token and takes the
+  sender from the session; without one it is a 401. `sender` and `token` are
+  gone from the body schema. `restart.test.ts` posts with a token.
+- **Web UI tests.** Vitest, `@testing-library/svelte` and jsdom in `apps/web`,
+  mounting `ChatShell` against the core fake backend. Covered: a DM from an
+  unknown room appears live with unread; unread counts and clears; a message
+  during a room switch is kept; phone rail open/close; widening with a drawer
+  open. Part of `npm test`, so CI runs them.
+- **WebSocket close race.** Reproduced in `packages/core/src/ws.ts` with a
+  scripted socket, then fixed: events from a socket the client already dropped
+  or replaced are ignored. The `closedByUs` flag is gone.
+- **ChatShell slim-down.** Scroll pinning (`ScrollPin`), the room-switch
+  transcript buffer (`TranscriptBuffer`) and the `session.on(...)` block
+  (`bindSessionListeners`) moved to `apps/web/src/lib/chat/`, one commit each,
+  diffed against the original. `selectRoom` stays in `ChatShell`; most of it is
+  shell UI (rails, drafts, menus, typing).
+- **Message ID cap.** `displayedMessageIds` keeps the most recent 5,000 ids.
 - **Phone rails.** On phone, the whole collapsed rail is the open control, and
   its chevron is vertically centered. Open drawers keep the chevron in the
   header. Fix the open drawer jumping into the grid when widening from phone.
