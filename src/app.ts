@@ -36,6 +36,7 @@ import { previewRoutes } from './routes/preview';
 import { createCallState } from './routes/calls';
 import { registerWsHandler } from './ws/handler';
 import { WS_MAX_PAYLOAD_BYTES } from './ws/limits';
+import { registerSecurityHeaders } from './security-headers';
 
 export {
   DEFAULT_CALL_ALONE_TIMEOUT_MS,
@@ -267,11 +268,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     const payload = { err: error, event: 'request_error', statusCode };
     if (statusCode >= 500) {
       request.log.error(payload, error.message);
-    } else {
-      request.log.info(payload, error.message);
+      // Internal messages can carry paths, SQL and library details.
+      return reply.status(statusCode).send({ error: 'internal server error', reqId: request.id });
     }
+    request.log.info(payload, error.message);
     return reply.status(statusCode).send(error);
   });
+
+  registerSecurityHeaders(fastify);
 
   await fastify.register(websocket, { options: { maxPayload: WS_MAX_PAYLOAD_BYTES } });
   await fastify.register(multipart, { limits: { fileSize: FILE_SIZE_LIMIT } });
