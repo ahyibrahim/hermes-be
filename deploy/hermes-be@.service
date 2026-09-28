@@ -61,6 +61,35 @@ RestrictSUIDSGID=true
 RestrictNamespaces=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=true
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictRealtime=true
+RemoveIPC=true
+PrivateIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Files the service creates (database, WAL, uploads) are owner-only.
+UMask=0077
+
+# systemd reads EnvironmentFile before the sandbox starts; the process itself
+# never needs /etc/hermes, and hiding it keeps one instance from reading
+# another instance's env file.
+InaccessiblePaths=/etc/hermes
+
+# Kernel-level backstop for the link-preview fetcher: whatever DNS says, this
+# process cannot open connections to the LAN, the tailnet or link-local
+# addresses. Loopback stays open (Tailscale Serve connects there, and DNS
+# goes through systemd-resolved on 127.0.0.53). This also refuses inbound
+# connections from those ranges, so HERMES_HOST=0.0.0.0 does not open the
+# service to the LAN.
+IPAddressDeny=link-local multicast 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fc00::/7
 
 # Deliberately NOT MemoryDenyWriteExecute=true: V8 needs writable-executable
 # pages for its JIT and node will not start without them.

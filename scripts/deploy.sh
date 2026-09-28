@@ -203,12 +203,25 @@ install_web_bundle() {
   local bundle="$HERMES_WEB_BUNDLE"
   [[ -e "$bundle" ]] || fail "HERMES_WEB_BUNDLE=${bundle} does not exist"
 
+  # The service may write its data directory; if the bundle lived there, a
+  # compromised process could rewrite the JavaScript every browser loads.
+  local data_dir
+  data_dir="$(instance_data_dir)"
+  case "${web_dir%/}/" in
+    "${data_dir%/}/"*)
+      fail "HERMES_WEB_DIR=${web_dir} is inside the data directory ${data_dir}. Set HERMES_WEB_DIR=/srv/hermes/web/${INSTANCE} in ${ENV_FILE}, deploy again, then remove ${web_dir}."
+      ;;
+  esac
+  [[ ! -L "$web_dir" ]] || fail "HERMES_WEB_DIR=${web_dir} is a symlink; refusing to write through it"
+
   info "installing ${bundle} into ${web_dir}"
 
+  # Root owns the whole tree, staging included, so nothing the service user
+  # can write is ever on the path root copies into.
   local parent staging
   parent="$(dirname "$web_dir")"
-  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$parent"
-  staging="$(mktemp -d "${parent}/web.staging.XXXXXX")"
+  install -d -o root -g root -m 0755 "$parent"
+  staging="$(mktemp -d "${parent}/.staging.XXXXXX")"
 
   if [[ -d "$bundle" ]]; then
     cp -a "$bundle"/. "$staging"/
@@ -230,7 +243,9 @@ install_web_bundle() {
     if [[ ${#kids[@]} -eq 1 && -d "${kids[0]}" && -f "${kids[0]}/index.html" ]]; then
       info "using nested $(basename "${kids[0]}")/ as the bundle root"
       local inner="${kids[0]}"
-      local flat="${parent}/web.flatten.$$"
+      local flat
+      flat="$(mktemp -d "${parent}/.flatten.XXXXXX")"
+      rmdir "$flat"
       mv "$inner" "$flat"
       rm -rf "$staging"
       mv "$flat" "$staging"
@@ -242,13 +257,51 @@ install_web_bundle() {
     fail "web bundle has no index.html; expected a SvelteKit apps/web/build directory"
   fi
 
-  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$web_dir"
+  install -d -o root -g root -m 0755 "$web_dir"
   # Replace contents so hashed assets from the previous release do not linger.
   find "$web_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  cp -a "$staging"/. "$web_dir"/
-  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$web_dir"
+  cp -a --no-preserve=ownership "$staging"/. "$web_dir"/
+  chown -R root:root "$web_dir"
+  chmod -R u=rwX,go=rX "$web_dir"
   rm -rf "$staging"
-  info "web bundle installed at ${web_dir}"
+  info "web bundle installed at ${web_dir} (root-owned, read-only to ${SERVICE_USER})"
+}
+
+instance_data_dir() {
+  local db_path
+  db_path="$(env_file_value HERMES_DB_PATH)"
+  if [[ -n "$db_path" ]]; then
+    dirname "$db_path"
+  else
+    printf '/var/lib/hermes/%s\n' "$INSTANCE"
+  fi
+}
+
+# The service writes with UMask=0077, but older releases, manual `cp -a`
+# backups and the pre-v0.27 deploy script left the database world-readable.
+# Session tokens and password hashes live there, so this runs on every deploy.
+secure_data_dir() {
+  step "Securing the data directory"
+  local data_dir
+  data_dir="$(instance_data_dir)"
+  [[ -d "$data_dir" ]] || { info "${data_dir} does not exist yet; nothing to do"; return 0; }
+  [[ ! -L "$data_dir" ]] || fail "data directory ${data_dir} is a symlink; refusing to chmod through it"
+
+  local db_name files_dir
+  db_name="$(basename "$(env_file_value HERMES_DB_PATH)")"
+  db_name="${db_name:-hermes.db}"
+  files_dir="$(env_file_value HERMES_FILES_DIR)"
+  files_dir="${files_dir:-${data_dir}/files}"
+
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$data_dir"
+  chmod 0750 "$data_dir"
+  # The glob also catches -wal, -shm and hand-made .pre-vX.Y.Z backups.
+  find "$data_dir" -maxdepth 1 -type f -name "${db_name}*" -exec chmod 0600 {} +
+  if [[ -d "$files_dir" && ! -L "$files_dir" ]]; then
+    chmod 0750 "$files_dir"
+    find "$files_dir" -maxdepth 1 -type f -exec chmod 0600 {} +
+  fi
+  info "${data_dir} is 0750; ${db_name}* and uploads are 0600"
 }
 
 run_migrations() {
@@ -327,6 +380,7 @@ main() {
   install_dependencies
   build_backend
   install_web_bundle
+  secure_data_dir
   run_migrations
   write_instance_commit
   restart_service
