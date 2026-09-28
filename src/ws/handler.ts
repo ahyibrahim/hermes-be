@@ -18,6 +18,13 @@ import {
   WatchSession,
   WS_OPEN,
 } from '../routes/common';
+import {
+  createMessageBudget,
+  isAllowedWsOrigin,
+  WS_MAX_SOCKETS_PER_USER,
+  WS_POLICY_VIOLATION,
+  WS_UPGRADES_PER_MINUTE,
+} from './limits';
 
 export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
   const lastPong = new WeakMap<object, number>();
@@ -27,7 +34,16 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
     if (!ctx.userSockets.has(user)) {
       ctx.userSockets.set(user, new Set());
     }
-    ctx.userSockets.get(user)?.add(entry);
+    const sockets = ctx.userSockets.get(user)!;
+    // Set iteration order is insertion order, so the first entries are the oldest.
+    for (const old of [...sockets].slice(0, Math.max(0, sockets.size - WS_MAX_SOCKETS_PER_USER + 1))) {
+      try {
+        old.socket.close?.(WS_POLICY_VIOLATION, 'too many connections');
+      } catch {
+        // already closed
+      }
+    }
+    sockets.add(entry);
     return entry;
   }
 
@@ -64,7 +80,16 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
     '/ws',
     {
       websocket: true,
+      config: { rateLimit: { max: WS_UPGRADES_PER_MINUTE, timeWindow: '1 minute' } },
       preHandler: async (request, reply) => {
+        if (!isAllowedWsOrigin(request)) {
+          request.log.info(
+            { event: 'ws_forbidden_origin', origin: request.headers.origin, host: request.headers.host },
+            'websocket handshake rejected'
+          );
+          return reply.code(403).send({ error: 'origin not allowed' });
+        }
+
         const token = extractBearer(request) ?? (request.query as { token?: string }).token;
         if (typeof token === 'string' && token.trim()) {
           const username = findSessionUser(token);
@@ -94,6 +119,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
       let user = (request as FastifyRequest & { username?: string }).username ?? '';
       let client: RoomSocket | null = null;
       let userEntry: TrackedSocket | null = null;
+      const budget = createMessageBudget();
 
       lastPong.set(socket, Date.now());
       if (user) {
@@ -166,6 +192,16 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
       });
 
       socket.on('message', (raw: Buffer | string) => {
+        if (!budget.take()) {
+          request.log.warn({ event: 'ws_rate_limited', user }, 'websocket message rate exceeded');
+          try {
+            socket.close?.(WS_POLICY_VIOLATION, 'rate limit exceeded');
+          } catch {
+            // already closed
+          }
+          return;
+        }
+
         try {
           const payload = JSON.parse(raw.toString());
 

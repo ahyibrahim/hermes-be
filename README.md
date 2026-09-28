@@ -29,6 +29,7 @@ Open `http://127.0.0.1:3000`. There is no frontend `npm start` — that command 
 |----------|---------|---------|
 | `PORT` | `3000` | Bind port. |
 | `HERMES_HOST` | `127.0.0.1` | Bind address. Tailscale Serve proxies to loopback; set `0.0.0.0` only for a throwaway LAN test. |
+| `HERMES_ALLOWED_ORIGINS` | unset | Extra origins allowed to open `/ws`, comma-separated. Same-host and loopback origins always are. |
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Anything that is not a positive number falls back to 30. |

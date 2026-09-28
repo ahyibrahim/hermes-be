@@ -35,6 +35,7 @@ import { fileRoutes } from './routes/files';
 import { previewRoutes } from './routes/preview';
 import { createCallState } from './routes/calls';
 import { registerWsHandler } from './ws/handler';
+import { WS_MAX_PAYLOAD_BYTES } from './ws/limits';
 
 export {
   DEFAULT_CALL_ALONE_TIMEOUT_MS,
@@ -272,7 +273,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return reply.status(statusCode).send(error);
   });
 
-  await fastify.register(websocket);
+  await fastify.register(websocket, { options: { maxPayload: WS_MAX_PAYLOAD_BYTES } });
   await fastify.register(multipart, { limits: { fileSize: FILE_SIZE_LIMIT } });
   await fastify.register(rateLimit, { global: false, ...authRateLimitConfig() });
 
