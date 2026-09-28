@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Listens on `0.0.0.0:3000` (or `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`. Do not point those at `/var/lib/hermes` — that is the production instance.
+Listens on `127.0.0.1:3000` (or `HERMES_HOST` and `PORT`). Data lives in `data/` (`hermes.db` and `files/`) **on the machine that runs the process**, not on the developer laptop. Override with `HERMES_DB_PATH` and `HERMES_FILES_DIR`. Do not point those at `/var/lib/hermes` — that is the production instance.
 
 To exercise the web UI the same way production does (one process, same origin), build hermes-fe first and point `HERMES_WEB_DIR` at `apps/web/build`. Use a throwaway database so a local run cannot touch live history:
 
@@ -27,7 +27,8 @@ Open `http://127.0.0.1:3000`. There is no frontend `npm start` — that command 
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3000` | Bind port, on `0.0.0.0`. |
+| `PORT` | `3000` | Bind port. |
+| `HERMES_HOST` | `127.0.0.1` | Bind address. Tailscale Serve proxies to loopback; set `0.0.0.0` only for a throwaway LAN test. |
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Anything that is not a positive number falls back to 30. |

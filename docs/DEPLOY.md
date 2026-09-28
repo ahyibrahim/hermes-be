@@ -369,7 +369,8 @@ template, carrying `p1`'s values.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3000` | Port the server binds, on `0.0.0.0`. Give a second instance a different one. |
+| `PORT` | `3000` | Port the server binds. Give a second instance a different one. |
+| `HERMES_HOST` | `127.0.0.1` | Address the server binds. Loopback only: Tailscale Serve is the way in, and `X-Forwarded-For` is trusted from loopback alone. Do not set `0.0.0.0` on a host with other people on its LAN. |
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. Must be inside the unit's `ReadWritePaths`. `p1` uses `/var/lib/hermes/p1/hermes.db`. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. `p1` uses `/var/lib/hermes/p1/files`. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Values that are not a positive number fall back to the default. |

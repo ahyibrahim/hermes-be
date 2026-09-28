@@ -112,6 +112,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
       destination: options.loggerDestination,
       level: options.logLevel,
     }),
+    // Tailscale Serve connects from loopback and sets X-Forwarded-For. Trust it
+    // from there only, so request.ip (and the rate-limit key) is the real
+    // client rather than 127.0.0.1 for everyone.
+    trustProxy: ['127.0.0.1', '::1'],
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: 'x-request-id',
     requestIdLogLabel: 'reqId',
