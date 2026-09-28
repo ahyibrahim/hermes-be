@@ -77,17 +77,24 @@ test('a login token still authenticates after the server restarts', async () => 
     assert.equal(bearer.status, 200, 'Authorization: Bearer must still work after a restart');
 
     const queryParam = await fetch(`${second.origin}/rooms?token=${encodeURIComponent(session.token)}`);
-    assert.equal(queryParam.status, 200, '?token= must still work after a restart');
+    assert.equal(queryParam.status, 401, 'REST must not accept ?token=');
 
     const bodyToken = await fetch(`${second.origin}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ room: 'general', content: 'after restart', token: session.token }),
     });
-    assert.equal(bodyToken.status, 200, 'a token in the POST body must still work after a restart');
-    const posted = (await bodyToken.json()) as { sender: string; content: string };
-    assert.equal(posted.sender, 'persist');
-    assert.equal(posted.content, 'after restart');
+    assert.equal(bodyToken.status, 401, 'REST must not accept a token in the POST body');
+
+    const posted = await fetch(`${second.origin}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
+      body: JSON.stringify({ room: 'general', content: 'after restart' }),
+    });
+    assert.equal(posted.status, 200, 'a Bearer POST must still work after a restart');
+    const message = (await posted.json()) as { sender: string; content: string };
+    assert.equal(message.sender, 'persist');
+    assert.equal(message.content, 'after restart');
 
     const handshake = await wsHandshake(
       second.port,

@@ -130,6 +130,20 @@ test('v0.7.0 REST: profile, password change, avatar, first user is admin', async
   });
   assert.equal(rejected.status, 415);
 
+  const disguised = new FormData();
+  disguised.append(
+    'file',
+    new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], { type: 'image/png' }),
+    'me.png'
+  );
+  const disguisedUpload = await fetch(`${origin}/users/me/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${aliceToken}` },
+    body: disguised,
+  });
+  assert.equal(disguisedUpload.status, 415, 'avatar type comes from the bytes, not the claimed MIME');
+  assert.equal(avatar.headers.get('x-content-type-options'), 'nosniff');
+
   await app.close();
 });
 

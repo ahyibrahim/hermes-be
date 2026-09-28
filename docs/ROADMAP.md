@@ -45,6 +45,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
 - [x] v0.25.0 - Maintainability hardening (live on `p1`)
 - [ ] v0.26.0 - Safety net and phone rails
+- [ ] v0.27.0 - Hardening: exposure and content
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1271,6 +1272,37 @@ numbered lists and ~~strikethrough~~; not notice anything else changed.
   [fe#150](https://github.com/ahyibrahim/hermes-fe/issues/150))
 - Phone rail tap target and drawer jump (issue to file)
 - Markdown lists and strikethrough (issue to file)
+
+## v0.27.0 - Hardening: exposure and content
+
+First of several hardening releases ahead of guest access. Narrows what the
+server listens on, tightens how uploads and markdown are displayed, and sets
+browser security headers. Nothing new for friends to learn; a friend should
+notice nothing except that the CLI now defaults to the HTTPS address.
+
+### Locked
+
+- **Listen address.** `HERMES_HOST`, default `127.0.0.1`. Tailscale Serve
+  already proxies to loopback. Fastify trusts `X-Forwarded-For` from loopback
+  only, so per-client rate limits key on the real client.
+- **Uploads.** The server decides a file's type from its content. Only PNG,
+  JPEG, GIF and WebP display inline; everything else downloads. File and
+  avatar responses send `nosniff` and a sandbox CSP. REST routes take the
+  token from the `Authorization` header only; `/ws` keeps `?token=`.
+- **Headers.** CSP, `X-Content-Type-Options`, `Referrer-Policy`,
+  `frame-ancestors 'none'`, HSTS on the app.
+- **WebSocket limits.** Frame size cap, per-socket message rate, sockets per
+  user, and an `Origin` check on upgrade.
+- **Errors.** 5xx responses return a generic message; details stay in the
+  log. `/health` is unchanged (deploy verification reads `version` and
+  `commit`); the guest gateway will not serve it.
+- **Deploy.** Data directory stays `0750`, `UMask=0077`, web bundle outside
+  the writable data directory, extra systemd sandboxing.
+- **Markdown preview.** No styles, forms or remote images in rendered `.md`
+  attachments.
+- **CLI.** Defaults to the Tailscale HTTPS URL.
+- Not in scope: link-preview fetcher, room and call authorization, Fastify 5,
+  session hashing and roles (v0.28.0 through v0.30.0).
 
 ## Backlog (unscheduled)
 
