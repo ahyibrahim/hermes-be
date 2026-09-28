@@ -1,6 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import {
-  addRoomMember,
   createMessage,
   isRoomMember,
   listMessages,
@@ -74,29 +73,20 @@ export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext)
     }
 
     const token = extractToken(request);
-    let username: string | undefined;
-    if (token) {
-      username = findSessionUser(token) ?? undefined;
-      if (!username) {
-        reply.code(401);
-        return { error: 'invalid token' };
-      }
-    } else if (body.sender) {
-      username = body.sender;
-    }
-
-    if (!username) {
+    if (!token) {
       reply.code(401);
       return { error: 'authentication required' };
     }
 
-    if (token) {
-      if (!isRoomMember(slug, username)) {
-        reply.code(403);
-        return { error: 'not a member of this room' };
-      }
-    } else {
-      addRoomMember(slug, username);
+    const username = findSessionUser(token);
+    if (!username) {
+      reply.code(401);
+      return { error: 'invalid token' };
+    }
+
+    if (!isRoomMember(slug, username)) {
+      reply.code(403);
+      return { error: 'not a member of this room' };
     }
 
     revealRoomMembers(slug);
