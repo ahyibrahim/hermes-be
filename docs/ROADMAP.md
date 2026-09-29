@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.27.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.28.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -1366,7 +1366,8 @@ now loaded through Hermes. The phone transcript is unchanged from v0.27.
 - **Phone transcript.** Unchanged from v0.27.
 - Tested on `q1` behind Serve (`:4443`) before `p1`.
 - Not in scope: Fastify 5 and signed deploys (v0.29.0); session hashing,
-  roles, add-member consent and user-list scoping (v0.30.0).
+  roles, add-member consent and user-list scoping (v0.30.0). Announcement in
+  `docs/announcements/v0.28.0.md`.
 
 ## Backlog (unscheduled)
 
