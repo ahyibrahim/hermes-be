@@ -46,6 +46,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.25.0 - Maintainability hardening (live on `p1`)
 - [x] v0.26.0 - Safety net and phone rails (live on `p1`)
 - [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
+- [ ] v0.28.0 - Hardening: previews, removal, input
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1324,6 +1325,51 @@ notice nothing except that the CLI now defaults to the HTTPS address.
   session hashing and roles (v0.28.0 through v0.30.0). Announcement in
   `docs/announcements/v0.27.0.md`.
 
+## v0.28.0 - Hardening: previews, removal, input
+
+Second hardening release. Rewrites the link-preview fetcher, makes leaving,
+kicking and deleting a room take effect everywhere at once, and tightens what
+names and messages may contain. The visible change for friends is a steadier
+phone transcript.
+
+After this release a friend should: send a message on a phone without the
+transcript bobbing, and not scroll past the end with the keyboard open; see
+link previews as before, with images now loaded through Hermes.
+
+### Locked
+
+- **Link-preview fetcher.** Metadata is read with a streaming HTML tokenizer
+  that stops at the end of `<head>` (with a byte cap), not with regexes over
+  the whole page. The connection goes to the address that was checked: DNS is
+  resolved once per hop and only public unicast addresses are allowed
+  (`ipaddr.js`), on ports 80 and 443. One deadline covers every hop and the
+  body. Output URLs are http(s) only. Per-user rate limit and a concurrency
+  cap on outbound fetches.
+- **Preview images.** `og:image` and favicons are fetched by the server
+  through the same guarded fetcher, checked by magic bytes, and served to the
+  web client from Hermes. The web CSP drops `https:` from `img-src`.
+- **Removal.** Leaving or being kicked from a room ends that user's part in
+  the room's call, screen share, watch session and typing state, and detaches
+  their sockets from the room. Deleting a room tears all of that down. Call
+  signaling and screen share re-check room membership. Watch control and
+  ending a watch session require membership. A group creator keeps kick and
+  delete rights only while a member, and cannot kick admins.
+- **Names and frames.** New usernames and renames match `^[a-z0-9_]{2,24}$`;
+  existing names are kept. DM slugs are built from user IDs, with existing DMs
+  migrated. Names and messages reject control characters, and the CLI strips
+  them from everything the server sends. WebSocket frames are validated
+  against a schema, and errors are generic. Login takes the same time for
+  unknown users, and registration returns a generic error for a taken name.
+- **Housekeeping.** Replaced avatars and aborted uploads are deleted. Upload
+  rate limit per user. Logout clears drafts and in-memory caches. Downloads
+  no longer open as same-origin `blob:` documents.
+- **Phone transcript.** Sending no longer bobs the transcript, and the
+  keyboard no longer lets it scroll past the end
+  (`apps/web/src/lib/chat/scroll-pin.svelte.ts`).
+- Tested on `q1` behind Serve (`:4443`) before `p1`.
+- Not in scope: Fastify 5 and signed deploys (v0.29.0); session hashing,
+  roles, add-member consent and user-list scoping (v0.30.0).
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -1343,6 +1389,3 @@ label until then.
   different UI (always-on tiles vs opt-in preview)
 - Watch together: non-YouTube providers (Twitch, Vimeo, …) after v0.20.0
 - Search, read receipts, reactions (typing moved to v0.22.0)
-- Phone transcript: sending a message makes the transcript bob while it
-  settles, and with the keyboard open it scrolls past the end
-  (`apps/web/src/lib/chat/scroll-pin.svelte.ts`; issue to file)
