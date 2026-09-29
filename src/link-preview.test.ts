@@ -292,6 +292,20 @@ test('YouTube previews use oEmbed for title and thumbnail', async () => {
   assert.equal(extractYouTubeDuration('{"lengthSeconds":"42"}'), 42);
 });
 
+test('standard YouTube thumbnails are proxied without a preview first', async () => {
+  const seen: string[] = [];
+  const service = createLinkPreviewService({
+    fetchImpl: async (url) => {
+      seen.push(url);
+      return new Response(PNG, { status: 200 });
+    },
+  });
+  const thumb = await service.getImage('https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+  assert.equal(thumb?.type, 'image/png');
+  assert.equal(await service.getImage('https://i.ytimg.com/vi/dQw4w9WgXcQ/../../x.jpg'), null);
+  assert.deepEqual(seen, ['https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg']);
+});
+
 test('GET /link-preview and /link-preview/image for members', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-link-preview-'));
   process.env.HERMES_DB_PATH = path.join(tempDir, 'hermes.db');

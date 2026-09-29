@@ -48,6 +48,8 @@ const DEFAULT_MAX_PER_USER = 4;
 const MAX_QUEUED_PER_USER = 32;
 const TITLE_MAX = 300;
 const TEXT_MAX = 1_000;
+/** The web card shows this before the preview metadata has arrived. */
+const YOUTUBE_THUMB_RE = /^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{11}\/(?:hq|mq|sd|maxres)?default\.jpg$/;
 const USER_AGENT = 'HermesLinkPreview/0.28 (+https://github.com/ahyibrahim/hermes-be)';
 
 export type LinkPreviewOptions = {
@@ -386,6 +388,9 @@ export function createLinkPreviewService(options: LinkPreviewOptions = {}) {
   }
 
   function isKnownImage(url: string): boolean {
+    if (YOUTUBE_THUMB_RE.test(url)) {
+      return true;
+    }
     const expiresAt = knownImages.get(url);
     if (expiresAt === undefined) {
       return false;
