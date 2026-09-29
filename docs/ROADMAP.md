@@ -45,7 +45,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
 - [x] v0.25.0 - Maintainability hardening (live on `p1`)
 - [x] v0.26.0 - Safety net and phone rails (live on `p1`)
-- [ ] v0.27.0 - Hardening: exposure and content
+- [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
