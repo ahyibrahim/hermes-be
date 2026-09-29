@@ -140,7 +140,7 @@ export function normalizeRoomSlug(room: string | undefined): string | null {
   }
 
   const slug = room.trim().toLowerCase();
-  if (!slug || isNumericRoom(slug)) {
+  if (!slug || slug.length > 512 || isNumericRoom(slug)) {
     return null;
   }
 

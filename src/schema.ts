@@ -739,4 +739,55 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   );
   seedSystemHermes(db, log);
   postReleaseAnnouncement(db, log);
+  migrateDmSlugs(db, log);
+}
+
+/** DM slugs are `dm:<lowerUserId>:<higherUserId>`, independent of display names. */
+function migrateDmSlugs(db: SqliteDb, log: SchemaLogger): void {
+  if (!tableExists(db, 'rooms') || !columnNames(db, 'rooms').has('type') || !tableExists(db, 'room_members')) {
+    return;
+  }
+
+  const rooms = db.prepare("SELECT id, slug FROM rooms WHERE type = 'dm'").all() as Array<{
+    id: number;
+    slug: string;
+  }>;
+  const memberIds = db.prepare(
+    'SELECT user_id FROM room_members WHERE room_id = ? ORDER BY user_id ASC'
+  );
+  const renameRoom = db.prepare('UPDATE rooms SET slug = ? WHERE id = ?');
+  const renameMessages = tableExists(db, 'messages')
+    ? db.prepare('UPDATE messages SET room = ? WHERE room = ?')
+    : null;
+  const renameFiles = tableExists(db, 'files') ? db.prepare('UPDATE files SET room = ? WHERE room = ?') : null;
+  const renameReads = tableExists(db, 'room_reads')
+    ? db.prepare('UPDATE room_reads SET room = ? WHERE room = ?')
+    : null;
+
+  let changed = 0;
+  const run = db.transaction(() => {
+    for (const room of rooms) {
+      const ids = memberIds.all(room.id) as Array<{ user_id: number }>;
+      if (ids.length !== 2) {
+        continue;
+      }
+      const next = `dm:${ids[0].user_id}:${ids[1].user_id}`;
+      if (next === room.slug) {
+        continue;
+      }
+      renameMessages?.run(next, room.slug);
+      renameFiles?.run(next, room.slug);
+      renameReads?.run(next, room.slug);
+      renameRoom.run(next, room.id);
+      changed += 1;
+    }
+  });
+  run();
+  note(
+    log,
+    changed > 0,
+    'dm_slugs',
+    { changed },
+    changed > 0 ? `rewrote ${changed} DM slug(s) from user ids` : 'DM slugs already use user ids'
+  );
 }

@@ -5,6 +5,7 @@ import { createSession, deleteOtherSessions } from './sessions';
 import { isoTimestamp, USER_COLOR_PALETTE, type UserColor } from './colors';
 import { takenColors } from './rooms';
 import { isSystemUsername, SYSTEM_USERNAME } from './system-user';
+import { isUsername } from './text';
 
 export type UserRole = 'member' | 'admin';
 
@@ -41,6 +42,9 @@ export async function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, ARGON2_OPTIONS);
 }
 
+/** Verified when the account is missing so login does not return early. */
+const unknownUserHash = hashPassword('hermes-unknown-user');
+
 async function passwordMatches(stored: string, password: string): Promise<boolean> {
   if (looksLikeArgon2(stored)) {
     try {
@@ -68,6 +72,9 @@ export async function registerUser(username: string, password: string): Promise<
   const normalizedUsername = username.trim().toLowerCase();
   if (!normalizedUsername || !password.trim()) {
     throw new Error('username and password are required');
+  }
+  if (!isUsername(normalizedUsername)) {
+    throw new Error('username must be 2-24 characters: a-z, 0-9, underscore');
   }
   if (isSystemUsername(normalizedUsername)) {
     throw new Error('username is reserved');
@@ -110,7 +117,16 @@ export async function loginUser(username: string, password: string): Promise<Aut
     | { id: number; username: string; password: string; system: number }
     | undefined;
 
-  if (!user || user.system || !(await passwordMatches(user.password, password))) {
+  if (!user || user.system) {
+    try {
+      await argon2.verify(await unknownUserHash, password);
+    } catch {
+      // The dummy hash is well formed; a throw still must not skip the wait.
+    }
+    return null;
+  }
+
+  if (!(await passwordMatches(user.password, password))) {
     return null;
   }
 

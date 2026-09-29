@@ -62,8 +62,13 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         addUserToGeneralRoom(user.id);
         return { user: { id: user.id, username: user.username, role: user.role, color: user.color } };
       } catch (error) {
+        const message = (error as Error).message;
+        if (message.startsWith('username must') || message === 'username and password are required') {
+          reply.code(400);
+          return { error: message };
+        }
         reply.code(409);
-        return { error: (error as Error).message };
+        return { error: 'could not register' };
       }
     }
   );

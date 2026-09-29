@@ -1,5 +1,6 @@
 import { getDb } from './database';
 import { isoTimestamp } from './colors';
+import { hasControlChar } from './text';
 
 export interface RoomRecord {
   id: number;
@@ -199,6 +200,9 @@ export function createGroupRoom(
   if (!trimmed) {
     throw new Error('name is required');
   }
+  if (hasControlChar(trimmed)) {
+    throw new Error('name contains invalid characters');
+  }
 
   const createdAt = isoTimestamp();
   const slug = `group:${trimmed.toLowerCase().replace(/\s+/g, '-')}:${Date.now()}`;
@@ -238,14 +242,14 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
   }
 
   const members = getDb()
-    .prepare('SELECT id, username FROM users WHERE id IN (?, ?) ORDER BY username ASC')
+    .prepare('SELECT id, username FROM users WHERE id IN (?, ?) ORDER BY id ASC')
     .all(userId, otherUserId) as Array<{ id: number; username: string }>;
 
   if (members.length !== 2) {
     throw new Error('both users must exist');
   }
 
-  const slug = `dm:${members[0].username}:${members[1].username}`;
+  const slug = `dm:${members[0].id}:${members[1].id}`;
   const existing = getRoomBySlug(slug);
   if (existing) {
     addMemberIds(existing.id, userId);

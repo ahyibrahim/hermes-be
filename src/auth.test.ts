@@ -46,4 +46,8 @@ test('registers with argon2id, first user is admin, SHA256 rehashes on login', a
   };
   assert.ok(after.password.startsWith('$argon2id$'));
   assert.ok(await loginUser('legacy', 'oldpass'));
+  assert.equal(await loginUser('nosuchuser', 'hunter2'), null);
+  await assert.rejects(() => registerUser('Bad Name', 'hunter2'), /username must/);
+  await assert.rejects(() => registerUser('a', 'hunter2'), /username must/);
+  await assert.rejects(() => registerUser('alice', 'otherpass'), /UNIQUE/);
 });
