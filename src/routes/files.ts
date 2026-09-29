@@ -7,11 +7,11 @@ import { createFileRecord, createMessage, getFileRecord, isRoomMember } from '..
 import { revealRoomMembers } from '../rooms';
 import { buildContentDisposition } from '../content-disposition';
 import { sniffInlineImageFile, UPLOAD_RESPONSE_HEADERS } from '../file-type';
-import { normalizeRoomSlug, resolveUser, RouteContext } from './common';
+import { normalizeRoomSlug, perUserRateLimit, resolveUser, RouteContext } from './common';
 import { fileIdParamSchema } from '../schemas';
 
 export async function fileRoutes(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
-  fastify.post('/files', async (request, reply) => {
+  fastify.post('/files', { config: { rateLimit: perUserRateLimit(20) } }, async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
       return { error: 'authentication required' };
@@ -38,50 +38,57 @@ export async function fileRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     }
     const storedName = `${crypto.randomUUID()}`;
     const storedPath = path.join(ctx.filesDir, storedName);
-    await pipeline(data.file, fs.createWriteStream(storedPath));
+    let committed = false;
+    try {
+      await pipeline(data.file, fs.createWriteStream(storedPath));
 
-    if (data.file.truncated) {
-      fs.rmSync(storedPath, { force: true });
-      reply.code(413);
-      return { error: 'file too large' };
+      if (data.file.truncated) {
+        reply.code(413);
+        return { error: 'file too large' };
+      }
+
+      const size = fs.statSync(storedPath).size;
+      const file = createFileRecord(
+        slug,
+        username,
+        data.filename || 'upload',
+        data.mimetype || 'application/octet-stream',
+        size,
+        storedPath
+      );
+      committed = true;
+      revealRoomMembers(slug);
+      const message = createMessage(slug, username, file.original_name, file.id);
+      ctx.broadcastToMembers(slug, { type: 'message', message });
+      request.log.info(
+        {
+          event: 'file_upload',
+          id: file.id,
+          uploader: username,
+          size: file.size,
+          mime: file.mime,
+          room: slug,
+        },
+        'file uploaded'
+      );
+
+      return {
+        file: {
+          id: file.id,
+          room: file.room,
+          uploader: file.uploader,
+          original_name: file.original_name,
+          mime: file.mime,
+          size: file.size,
+          created_at: file.created_at,
+        },
+        message,
+      };
+    } finally {
+      if (!committed) {
+        fs.rmSync(storedPath, { force: true });
+      }
     }
-
-    const size = fs.statSync(storedPath).size;
-    const file = createFileRecord(
-      slug,
-      username,
-      data.filename || 'upload',
-      data.mimetype || 'application/octet-stream',
-      size,
-      storedPath
-    );
-    revealRoomMembers(slug);
-    const message = createMessage(slug, username, file.original_name, file.id);
-    ctx.broadcastToMembers(slug, { type: 'message', message });
-    request.log.info(
-      {
-        event: 'file_upload',
-        id: file.id,
-        uploader: username,
-        size: file.size,
-        mime: file.mime,
-        room: slug,
-      },
-      'file uploaded'
-    );
-
-    return {
-      file: {
-        id: file.id,
-        room: file.room,
-        uploader: file.uploader,
-        original_name: file.original_name,
-        mime: file.mime,
-        size: file.size,
-        created_at: file.created_at,
-      },
-      message,
-    };
   });
 
   fastify.get('/files/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {
