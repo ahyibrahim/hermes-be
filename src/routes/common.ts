@@ -13,6 +13,8 @@ export type RoomSocket = {
   };
   room: string;
   user: string;
+  /** Clears the socket's own room binding when membership ends elsewhere. */
+  release?: () => void;
 };
 
 export type TrackedSocket = {
@@ -189,6 +191,8 @@ export type RouteContext = {
   broadcastToRoom: (room: string, payload: unknown, exceptSocket?: unknown) => void;
   broadcastToMembers: (room: string, payload: unknown, exceptUser?: string) => void;
   fanOutMembership: (slug: string, addedBy: string, added: string[]) => void;
+  evictFromRoom: (room: string, username: string) => void;
+  teardownRoom: (room: string, formerMembers: string[], deletedBy: string) => void;
   connectedUsers: (room: string) => string[];
   onlineUsernames: () => string[];
   touchTyping: (room: string, username: string) => void;

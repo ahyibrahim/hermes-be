@@ -32,6 +32,10 @@ export type AuthzRoom = {
 
 export type AuthzContext = {
   room?: AuthzRoom;
+  /** Whether the actor is currently a member of `room`. */
+  actorIsMember?: boolean;
+  /** The user a kick would remove. */
+  target?: AuthzActor;
   /** True when the actor hosts the active watch session (v0.20). */
   isWatchHost?: boolean;
 };
@@ -56,7 +60,11 @@ export function can(actor: AuthzActor, action: AuthzAction, context: AuthzContex
       if (actor.role === 'admin') {
         return true;
       }
-      return room.creator_id != null && room.creator_id === actor.id;
+      // A creator moderates only while still in the room, and never admins.
+      if (room.creator_id == null || room.creator_id !== actor.id || context.actorIsMember !== true) {
+        return false;
+      }
+      return action === 'room.delete' || context.target?.role !== 'admin';
     }
 
     case 'watch.start':

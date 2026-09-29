@@ -340,10 +340,16 @@ export function leaveRoom(slug: string, username: string): { ok: true } | { erro
   if (!room || !user) {
     return { error: 'not a member of this room' };
   }
-  getDb()
-    .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
-    .run(room.id, user.id);
+  removeMembership(room.id, user.id);
   return { ok: true };
+}
+
+/** A creator who leaves or is removed does not get moderation back by being re-added. */
+function removeMembership(roomId: number, userId: number): void {
+  getDb().transaction(() => {
+    getDb().prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?').run(roomId, userId);
+    getDb().prepare('UPDATE rooms SET creator_id = NULL WHERE id = ? AND creator_id = ?').run(roomId, userId);
+  })();
 }
 
 export function kickMember(
@@ -374,11 +380,9 @@ export function kickMember(
     return { error: 'not a member of this room', status: 404 };
   }
 
-  getDb()
-    .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
-    .run(room.id, target.id);
+  removeMembership(room.id, target.id);
 
-  return { room: toSummary(room), removed: target.username };
+  return { room: toSummary(getRoomBySlug(slug) ?? room), removed: target.username };
 }
 
 export function deleteGroupRoom(

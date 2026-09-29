@@ -21,15 +21,22 @@ test('can(): admin-only actions', () => {
 });
 
 test('can(): room.kick and room.delete for admin or creator', () => {
+  const inRoom = { room: group, actorIsMember: true };
   assert.equal(can(admin, 'room.kick', { room: group }), true);
-  assert.equal(can(creator, 'room.kick', { room: group }), true);
-  assert.equal(can(member, 'room.kick', { room: group }), false);
+  assert.equal(can(creator, 'room.kick', { ...inRoom, target: member }), true);
+  assert.equal(can(member, 'room.kick', { ...inRoom, target: creator }), false);
   assert.equal(can(admin, 'room.delete', { room: group }), true);
-  assert.equal(can(creator, 'room.delete', { room: group }), true);
-  assert.equal(can(member, 'room.delete', { room: group }), false);
+  assert.equal(can(creator, 'room.delete', inRoom), true);
+  assert.equal(can(member, 'room.delete', inRoom), false);
 
   assert.equal(can(admin, 'room.kick', { room: general }), false);
   assert.equal(can(admin, 'room.delete', { room: dm }), false);
+});
+
+test('can(): a creator moderates only while a member, and never admins', () => {
+  assert.equal(can(creator, 'room.kick', { room: group, target: member }), false);
+  assert.equal(can(creator, 'room.delete', { room: group, actorIsMember: false }), false);
+  assert.equal(can(creator, 'room.kick', { room: group, actorIsMember: true, target: admin }), false);
 });
 
 test('can(): reserved watch actions (admin or host)', () => {

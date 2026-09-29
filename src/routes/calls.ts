@@ -283,6 +283,12 @@ export function createCallState(fastify: FastifyInstance, options: CallManagerOp
     fastify.log.info({ event: 'watch_end', user: endedBy, room }, 'ended watch session');
   }
 
+  /** Drops a session without a system line, for rooms that no longer exist. */
+  function discardWatchSession(room: string): void {
+    clearWatchAloneTimer(room);
+    watchSessions.delete(room);
+  }
+
   function removeFromWatch(room: string, username: string, notifyLeaver: boolean): void {
     const session = watchSessions.get(room);
     if (!session?.participants.has(username)) {
@@ -335,6 +341,7 @@ export function createCallState(fastify: FastifyInstance, options: CallManagerOp
     broadcastWatch,
     postWatchSystemLine,
     endWatchSession,
+    discardWatchSession,
     removeFromWatch,
     leaveAllWatches,
   };

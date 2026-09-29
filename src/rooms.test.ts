@@ -16,8 +16,11 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
     addUserToGeneralRoom,
     createGroupRoom,
     getOrCreateDmRoom,
+    getRoomBySlug,
     getUserByUsername,
     isRoomMember,
+    kickMember,
+    leaveRoom,
     listRoomsForUser,
     addMembersToGroup,
   } = await import('./rooms');
@@ -62,4 +65,20 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
   assert.equal(blocked.error, 'cannot add a system user');
 
   assert.throws(() => getOrCreateDmRoom(alice.id, alice.id), /cannot DM yourself/);
+
+  const kicked = kickMember(group.slug, bob.id);
+  assert.ok(!('error' in kicked));
+  assert.equal(isRoomMember(group.slug, 'bob'), false);
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, alice.id);
+
+  const readded = addMembersToGroup(group.slug, 'alice', [bob.id]);
+  assert.ok(!('error' in readded));
+  const left = leaveRoom(group.slug, 'alice');
+  assert.ok(!('error' in left));
+  assert.equal(isRoomMember(group.slug, 'alice'), false);
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, null);
+
+  const back = addMembersToGroup(group.slug, 'bob', [alice.id]);
+  assert.ok(!('error' in back));
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, null);
 });
