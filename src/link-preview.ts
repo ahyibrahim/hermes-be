@@ -1,7 +1,15 @@
-import dns from 'node:dns/promises';
-import net from 'node:net';
-import { isIP } from 'node:net';
+import { Parser } from 'htmlparser2';
 import { normalizeYouTubeUrl, parseYouTubeVideoId } from './youtube';
+import {
+  createSafeFetcher,
+  isBlockedHostname,
+  readCapped,
+  type ResolveFn,
+  type SafeFetchTransport,
+} from './safe-fetch';
+import { sniffInlineImage } from './file-type';
+
+export { isBlockedHostname };
 
 export type LinkPreview = {
   url: string;
@@ -17,19 +25,32 @@ export type LinkPreview = {
   durationSeconds?: number | null;
 };
 
-type CacheEntry = {
+export type PreviewImage = { bytes: Buffer; type: string };
+
+type CacheEntry<T> = {
   expiresAt: number;
-  preview: LinkPreview | null;
+  value: T;
 };
 
-const DEFAULT_TIMEOUT_MS = 5_000;
-/** YouTube embeds OG tags after a large script payload; keep headroom for late meta. */
-const DEFAULT_MAX_BYTES = 1.5 * 1024 * 1024;
+const DEFAULT_TIMEOUT_MS = 8_000;
+/** Metadata must appear before this many bytes of the document. */
+const DEFAULT_MAX_BYTES = 512 * 1024;
+/** YouTube's watch page carries its duration deep in the body. */
+const YOUTUBE_WATCH_MAX_BYTES = 1.5 * 1024 * 1024;
+const OEMBED_MAX_BYTES = 64 * 1024;
+const IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const IMAGE_CACHE_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 3;
 const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_CACHE_MAX = 256;
-
-const BLOCKED_HOSTS = new Set(['localhost', 'metadata.google.internal']);
+const DEFAULT_MAX_CONCURRENT = 8;
+const DEFAULT_MAX_PER_USER = 4;
+const MAX_QUEUED_PER_USER = 32;
+const TITLE_MAX = 300;
+const TEXT_MAX = 1_000;
+/** The web card shows this before the preview metadata has arrived. */
+const YOUTUBE_THUMB_RE = /^https:\/\/i\.ytimg\.com\/vi\/[A-Za-z0-9_-]{11}\/(?:hq|mq|sd|maxres)?default\.jpg$/;
+const USER_AGENT = 'HermesLinkPreview/0.28 (+https://github.com/ahyibrahim/hermes-be)';
 
 export type LinkPreviewOptions = {
   timeoutMs?: number;
@@ -37,145 +58,195 @@ export type LinkPreviewOptions = {
   maxRedirects?: number;
   cacheTtlMs?: number;
   cacheMax?: number;
-  /** Injected fetch for tests. */
-  fetchImpl?: typeof fetch;
-  /** Injected DNS lookup for tests. */
-  lookup?: (hostname: string) => Promise<string[]>;
+  maxConcurrent?: number;
+  maxPerUser?: number;
+  /** Injected HTTP transport for tests; receives the guarded lookup. */
+  fetchImpl?: SafeFetchTransport;
+  /** Injected DNS resolution for tests. */
+  lookup?: ResolveFn;
+  /** Tests point previews at a loopback server. */
+  isAllowedAddress?: (ip: string) => boolean;
+  allowedPorts?: ReadonlySet<string>;
 };
 
-function isPrivateOrLocalIp(ip: string): boolean {
-  if (ip === '::' || ip === '0.0.0.0') {
-    return true;
-  }
-  if (ip === '::1' || ip.startsWith('fe80:') || ip.startsWith('fc') || ip.startsWith('fd')) {
-    return true;
-  }
-  const v4 = ip.includes(':') && ip.includes('.') ? ip.split(':').pop()! : ip;
-  if (!net.isIPv4(v4)) {
-    // Other IPv6: treat unique-local / link-local already handled; block unspecified.
-    return ip === '::' || ip.toLowerCase().startsWith('::ffff:127.');
-  }
-  const parts = v4.split('.').map(Number);
-  const [a, b] = parts;
-  if (a === 10 || a === 127 || a === 0) {
-    return true;
-  }
-  if (a === 169 && b === 254) {
-    return true;
-  }
-  if (a === 172 && b >= 16 && b <= 31) {
-    return true;
-  }
-  if (a === 192 && b === 168) {
-    return true;
-  }
-  if (a === 100 && b >= 64 && b <= 127) {
-    // CGNAT
-    return true;
-  }
-  return false;
-}
+export class BusyError extends Error {}
 
-export function isBlockedHostname(hostname: string): boolean {
-  const host = hostname.trim().toLowerCase().replace(/\.$/, '');
-  if (!host || BLOCKED_HOSTS.has(host)) {
-    return true;
-  }
-  if (host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
-    return true;
-  }
-  if (isIP(host)) {
-    return isPrivateOrLocalIp(host);
-  }
-  return false;
-}
+/** A semaphore that hands a released slot straight to the next waiter. */
+class Limiter {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
 
-function metaContent(html: string, property: string): string | null {
-  const patterns = [
-    new RegExp(
-      `<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']*)["'][^>]*>`,
-      'i'
-    ),
-    new RegExp(
-      `<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']${property}["'][^>]*>`,
-      'i'
-    ),
-  ];
-  for (const re of patterns) {
-    const match = html.match(re);
-    if (match?.[1]) {
-      return decodeHtmlEntities(match[1].trim()) || null;
+  constructor(
+    private readonly max: number,
+    private readonly maxQueued = Infinity
+  ) {}
+
+  get idle(): boolean {
+    return this.active === 0 && this.waiting.length === 0;
+  }
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active < this.max) {
+      this.active += 1;
+    } else {
+      if (this.waiting.length >= this.maxQueued) {
+        throw new BusyError('too many queued fetches');
+      }
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    try {
+      return await task();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) {
+        next();
+      } else {
+        this.active -= 1;
+      }
     }
   }
-  return null;
 }
 
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)));
-}
-
-function pageTitle(html: string): string | null {
-  const match = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-  if (!match?.[1]) {
+function clip(value: string | undefined | null, max: number): string | null {
+  if (typeof value !== 'string') {
     return null;
   }
-  return decodeHtmlEntities(match[1].trim()) || null;
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return null;
+  }
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function absoluteUrl(base: string, maybeRelative: string | null): string | null {
+/** http(s) only: `javascript:` or `data:` in og:image would otherwise pass through. */
+export function httpUrl(base: string, maybeRelative: string | null | undefined): string | null {
   if (!maybeRelative) {
     return null;
   }
   try {
-    return new URL(maybeRelative, base).toString();
+    const url = new URL(maybeRelative.trim(), base);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
   } catch {
     return null;
   }
 }
 
+type HeadData = {
+  meta: Map<string, string>;
+  title: string | null;
+  icons: Array<{ rel: string; href: string }>;
+};
+
+/**
+ * A streaming tokenizer over the document head. Linear in input size, and
+ * `done` flips at `</head>` or `<body>` so the caller can stop reading.
+ */
+function createHeadParser() {
+  const data: HeadData = { meta: new Map(), title: null, icons: [] };
+  let inTitle = false;
+  let titleText = '';
+  let done = false;
+
+  const parser = new Parser(
+    {
+      onopentag(name, attrs) {
+        if (done) {
+          return;
+        }
+        if (name === 'body') {
+          done = true;
+        } else if (name === 'meta') {
+          const key = (attrs.property || attrs.name || attrs.itemprop || '').trim().toLowerCase();
+          if (key && typeof attrs.content === 'string' && !data.meta.has(key)) {
+            data.meta.set(key, attrs.content.slice(0, TEXT_MAX * 2));
+          }
+        } else if (name === 'link') {
+          const rel = (attrs.rel || '').trim().toLowerCase();
+          const href = (attrs.href || '').trim();
+          if (href && rel.includes('icon') && data.icons.length < 16) {
+            data.icons.push({ rel, href });
+          }
+        } else if (name === 'title' && data.title === null) {
+          inTitle = true;
+        }
+      },
+      ontext(text) {
+        if (inTitle && titleText.length < TEXT_MAX) {
+          titleText += text;
+        }
+      },
+      onclosetag(name) {
+        if (name === 'title' && inTitle) {
+          inTitle = false;
+          data.title = titleText;
+        } else if (name === 'head') {
+          done = true;
+        }
+      },
+    },
+    { decodeEntities: true }
+  );
+
+  return {
+    data,
+    get done() {
+      return done;
+    },
+    write(chunk: string) {
+      if (!done) {
+        parser.write(chunk);
+      }
+    },
+    end() {
+      parser.end();
+      if (inTitle && data.title === null) {
+        data.title = titleText;
+      }
+    },
+  };
+}
+
 /** Prefer apple-touch / icon / shortcut icon; fall back to /favicon.ico. */
-function findFavicon(finalUrl: string, html: string): string | null {
-  const linkRe =
-    /<link\b[^>]*\brel=["']([^"']*)["'][^>]*>/gi;
-  let match: RegExpExecArray | null;
-  const candidates: Array<{ rel: string; href: string }> = [];
-  while ((match = linkRe.exec(html)) !== null) {
-    const tag = match[0];
-    const rel = match[1].toLowerCase();
-    const hrefMatch = tag.match(/\bhref=["']([^"']+)["']/i);
-    if (!hrefMatch?.[1]) {
-      continue;
-    }
-    if (
-      rel.split(/\s+/).some((token) =>
-        token === 'icon' ||
-        token === 'shortcut' ||
-        token === 'shortcuticon' ||
-        token === 'apple-touch-icon' ||
-        token === 'apple-touch-icon-precomposed'
-      ) ||
-      rel.includes('icon')
-    ) {
-      candidates.push({ rel, href: hrefMatch[1].trim() });
-    }
-  }
+function pickFavicon(finalUrl: string, icons: HeadData['icons']): string | null {
   const preferred =
-    candidates.find((c) => c.rel.includes('apple-touch-icon')) ||
-    candidates.find((c) => c.rel.split(/\s+/).includes('icon')) ||
-    candidates.find((c) => c.rel.includes('shortcut')) ||
-    candidates[0];
-  if (preferred) {
-    return absoluteUrl(finalUrl, preferred.href);
+    icons.find((c) => c.rel.includes('apple-touch-icon')) ||
+    icons.find((c) => c.rel.split(/\s+/).includes('icon')) ||
+    icons.find((c) => c.rel.includes('shortcut')) ||
+    icons[0];
+  return httpUrl(finalUrl, preferred ? preferred.href : '/favicon.ico');
+}
+
+function previewFromHead(finalUrl: string, head: HeadData): LinkPreview {
+  const meta = (key: string) => clip(head.meta.get(key), TEXT_MAX);
+  const title = clip(
+    head.meta.get('og:title') || head.meta.get('twitter:title') || head.title,
+    TITLE_MAX
+  );
+  const description = meta('og:description') || meta('twitter:description') || meta('description');
+  const image = httpUrl(finalUrl, head.meta.get('og:image') || head.meta.get('twitter:image'));
+  let site = clip(head.meta.get('og:site_name'), TITLE_MAX);
+  if (!site) {
+    try {
+      site = new URL(finalUrl).hostname.replace(/^www\./i, '');
+    } catch {
+      site = null;
+    }
   }
-  return absoluteUrl(finalUrl, '/favicon.ico');
+  return {
+    url: finalUrl,
+    title,
+    description,
+    image,
+    site,
+    favicon: pickFavicon(finalUrl, head.icons),
+  };
+}
+
+export function parsePreviewHtml(finalUrl: string, html: string): LinkPreview {
+  const parser = createHeadParser();
+  parser.write(html);
+  parser.end();
+  return previewFromHead(finalUrl, parser.data);
 }
 
 function parseIso8601Duration(value: string): number | null {
@@ -190,90 +261,118 @@ function parseIso8601Duration(value: string): number | null {
   return Number.isFinite(total) && total > 0 ? total : null;
 }
 
-function extractYouTubeWatchExtras(html: string): {
-  durationSeconds: number | null;
-} {
-  let durationSeconds: number | null = null;
-  const iso =
-    html.match(/itemprop=["']duration["'][^>]*content=["']([^"']+)["']/i) ||
-    html.match(/content=["']([^"']+)["'][^>]*itemprop=["']duration["']/i);
-  if (iso?.[1]) {
-    durationSeconds = parseIso8601Duration(iso[1]);
-  }
-  if (durationSeconds == null) {
-    const length = html.match(/"lengthSeconds":"(\d+)"/);
-    if (length) {
-      const n = Number(length[1]);
-      if (Number.isFinite(n) && n > 0) {
-        durationSeconds = n;
+export function extractYouTubeDuration(html: string): number | null {
+  let iso: string | null = null;
+  const parser = new Parser({
+    onopentag(name, attrs) {
+      if (iso === null && name === 'meta' && attrs.itemprop === 'duration' && attrs.content) {
+        iso = attrs.content;
       }
-    }
+    },
+  });
+  parser.write(html);
+  parser.end();
+  const fromMeta = iso ? parseIso8601Duration(iso) : null;
+  if (fromMeta != null) {
+    return fromMeta;
   }
-
-  return { durationSeconds };
+  const marker = '"lengthSeconds":"';
+  const at = html.indexOf(marker);
+  if (at < 0) {
+    return null;
+  }
+  const digits = /^\d{1,7}/.exec(html.slice(at + marker.length, at + marker.length + 8));
+  const n = digits ? Number(digits[0]) : 0;
+  return n > 0 ? n : null;
 }
 
-function parsePreviewHtml(finalUrl: string, html: string): LinkPreview {
-  const title =
-    metaContent(html, 'og:title') ||
-    metaContent(html, 'twitter:title') ||
-    pageTitle(html);
-  const description =
-    metaContent(html, 'og:description') ||
-    metaContent(html, 'twitter:description') ||
-    metaContent(html, 'description');
-  const image = absoluteUrl(
-    finalUrl,
-    metaContent(html, 'og:image') || metaContent(html, 'twitter:image')
-  );
-  let site = metaContent(html, 'og:site_name');
-  if (!site) {
-    try {
-      site = new URL(finalUrl).hostname.replace(/^www\./i, '');
-    } catch {
-      site = null;
-    }
+const ICO_MAGIC = [0x00, 0x00, 0x01, 0x00];
+
+/** Raster formats only. SVG is refused: it is a document that can carry script. */
+function sniffPreviewImage(head: Uint8Array): string | null {
+  const raster = sniffInlineImage(head);
+  if (raster) {
+    return raster;
   }
-  const favicon = findFavicon(finalUrl, html);
-  return {
-    url: finalUrl,
-    title,
-    description,
-    image,
-    site,
-    favicon,
-  };
+  if (head.length >= 4 && ICO_MAGIC.every((b, i) => head[i] === b)) {
+    return 'image/x-icon';
+  }
+  return null;
 }
 
 export function createLinkPreviewService(options: LinkPreviewOptions = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
   const cacheMax = options.cacheMax ?? DEFAULT_CACHE_MAX;
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const lookup =
-    options.lookup ??
-    (async (hostname: string) => {
-      const results = await dns.lookup(hostname, { all: true, verbatim: true });
-      return results.map((row) => row.address);
-    });
+  const fetcher = createSafeFetcher({
+    resolve: options.lookup,
+    transport: options.fetchImpl,
+    isAllowedAddress: options.isAllowedAddress,
+    allowedPorts: options.allowedPorts,
+    maxRedirects: options.maxRedirects ?? DEFAULT_MAX_REDIRECTS,
+  });
 
-  const cache = new Map<string, CacheEntry>();
+  const globalLimit = new Limiter(options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT);
+  const maxPerUser = options.maxPerUser ?? DEFAULT_MAX_PER_USER;
+  const userLimits = new Map<string, Limiter>();
 
-  function cacheGet(key: string): LinkPreview | null | undefined {
-    const hit = cache.get(key);
+  async function limited<T>(requester: string | undefined, task: () => Promise<T>): Promise<T> {
+    if (!requester) {
+      return globalLimit.run(task);
+    }
+    let own = userLimits.get(requester);
+    if (!own) {
+      own = new Limiter(maxPerUser, MAX_QUEUED_PER_USER);
+      userLimits.set(requester, own);
+    }
+    const limiter = own;
+    try {
+      return await limiter.run(() => globalLimit.run(task));
+    } finally {
+      if (limiter.idle) {
+        userLimits.delete(requester);
+      }
+    }
+  }
+
+  const cache = new Map<string, CacheEntry<LinkPreview | null>>();
+  /** Image URLs that appeared in a preview we served; the proxy fetches nothing else. */
+  const knownImages = new Map<string, number>();
+  const imageCache = new Map<string, CacheEntry<PreviewImage>>();
+  let imageCacheBytes = 0;
+
+  function lruGet<T>(map: Map<string, CacheEntry<T>>, key: string): T | undefined {
+    const hit = map.get(key);
     if (!hit) {
       return undefined;
     }
     if (hit.expiresAt <= Date.now()) {
-      cache.delete(key);
+      map.delete(key);
       return undefined;
     }
-    // Refresh insertion order for a crude LRU.
-    cache.delete(key);
-    cache.set(key, hit);
-    return hit.preview;
+    map.delete(key);
+    map.set(key, hit);
+    return hit.value;
+  }
+
+  function cacheGet(key: string): LinkPreview | null | undefined {
+    return lruGet(cache, key);
+  }
+
+  function rememberImage(url: string | null | undefined): void {
+    if (!url) {
+      return;
+    }
+    knownImages.delete(url);
+    knownImages.set(url, Date.now() + cacheTtlMs);
+    while (knownImages.size > cacheMax * 2) {
+      const oldest = knownImages.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      knownImages.delete(oldest);
+    }
   }
 
   function cacheSet(key: string, preview: LinkPreview | null): void {
@@ -283,238 +382,219 @@ export function createLinkPreviewService(options: LinkPreviewOptions = {}) {
         cache.delete(oldest);
       }
     }
-    cache.set(key, { preview, expiresAt: Date.now() + cacheTtlMs });
+    cache.set(key, { value: preview, expiresAt: Date.now() + cacheTtlMs });
+    rememberImage(preview?.image);
+    rememberImage(preview?.favicon);
   }
 
-  async function assertSafeUrl(raw: string): Promise<URL> {
-    let parsed: URL;
-    try {
-      parsed = new URL(raw);
-    } catch {
-      throw new Error('invalid url');
+  function isKnownImage(url: string): boolean {
+    if (YOUTUBE_THUMB_RE.test(url)) {
+      return true;
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new Error('unsupported protocol');
+    const expiresAt = knownImages.get(url);
+    if (expiresAt === undefined) {
+      return false;
     }
-    if (parsed.username || parsed.password) {
-      throw new Error('credentials not allowed');
+    if (expiresAt <= Date.now()) {
+      knownImages.delete(url);
+      return false;
     }
-    const host = parsed.hostname;
-    if (isBlockedHostname(host)) {
-      throw new Error('blocked host');
-    }
-    if (!isIP(host)) {
-      const addresses = await lookup(host);
-      if (addresses.length === 0 || addresses.some(isPrivateOrLocalIp)) {
-        throw new Error('blocked address');
-      }
-    }
-    return parsed;
+    return true;
   }
 
-  async function readBodyCapped(response: Response): Promise<string> {
-    if (!response.body) {
-      const text = await response.text();
-      return text.slice(0, maxBytes);
-    }
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
+  function imageCacheSet(url: string, image: PreviewImage): void {
+    imageCache.set(url, { value: image, expiresAt: Date.now() + cacheTtlMs });
+    imageCacheBytes += image.bytes.byteLength;
+    while (imageCacheBytes > IMAGE_CACHE_MAX_BYTES) {
+      const oldest = imageCache.keys().next().value;
+      if (oldest === undefined) {
         break;
       }
-      if (!value) {
-        continue;
-      }
-      total += value.byteLength;
-      if (total > maxBytes) {
-        chunks.push(value.slice(0, Math.max(0, value.byteLength - (total - maxBytes))));
-        try {
-          await reader.cancel();
-        } catch {
-          // ignore
-        }
-        break;
-      }
-      chunks.push(value);
+      imageCacheBytes -= imageCache.get(oldest)!.value.bytes.byteLength;
+      imageCache.delete(oldest);
     }
-    return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
   }
 
-  async function fetchOnce(url: string): Promise<{ response: Response; finalUrl: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetchImpl(url, {
-        method: 'GET',
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: {
-          Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-          'User-Agent': 'HermesLinkPreview/0.23 (+https://github.com/ahyibrahim/hermes-be)',
-        },
-      });
-      return { response, finalUrl: url };
-    } finally {
-      clearTimeout(timer);
+  async function fetchHead(startUrl: string, signal: AbortSignal): Promise<LinkPreview | null> {
+    const { response, finalUrl } = await fetcher.fetch(startUrl, {
+      signal,
+      headers: { Accept: 'text/html,application/xhtml+xml;q=0.9', 'User-Agent': USER_AGENT },
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return null;
     }
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    const parser = createHeadParser();
+    const decoder = new TextDecoder('utf-8');
+    await readCapped(response, maxBytes, signal, (chunk) => {
+      parser.write(decoder.decode(chunk, { stream: true }));
+      return parser.done;
+    });
+    parser.end();
+    return previewFromHead(finalUrl, parser.data);
+  }
+
+  async function fetchText(url: string, accept: string, cap: number, signal: AbortSignal): Promise<string | null> {
+    const { response } = await fetcher.fetch(url, {
+      signal,
+      headers: { Accept: accept, 'User-Agent': USER_AGENT },
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    return (await readCapped(response, cap, signal)).toString('utf8');
   }
 
   /**
    * YouTube puts og:* tags hundreds of KB into the document. oEmbed is small and
-   * returns title + thumbnail reliably; the watch page supplies duration + avatar.
+   * returns title + thumbnail reliably; the watch page supplies the duration.
    */
-  async function fetchYouTubeOEmbed(pageUrl: string): Promise<LinkPreview | null> {
+  async function fetchYouTubeOEmbed(pageUrl: string, signal: AbortSignal): Promise<LinkPreview | null> {
     const videoId = parseYouTubeVideoId(pageUrl);
     if (!videoId) {
       return null;
     }
     const watchUrl = normalizeYouTubeUrl(videoId);
     const oembedUrl = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watchUrl)}`;
-    await assertSafeUrl(oembedUrl);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const watchPromise = fetchHtml(watchUrl).catch(() => null);
-      const oembedRes = await fetchImpl(oembedUrl, {
-        method: 'GET',
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'HermesLinkPreview/0.23 (+https://github.com/ahyibrahim/hermes-be)',
-        },
-      });
-      if (!oembedRes.ok) {
-        return null;
-      }
-      const data = (await oembedRes.json()) as {
-        title?: unknown;
-        author_name?: unknown;
-        author_url?: unknown;
-        thumbnail_url?: unknown;
-      };
-      const title = typeof data.title === 'string' && data.title.trim() ? data.title.trim() : null;
-      if (!title) {
-        return null;
-      }
-      const image =
-        typeof data.thumbnail_url === 'string' && data.thumbnail_url.trim()
-          ? data.thumbnail_url.trim()
-          : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-      const author =
-        typeof data.author_name === 'string' && data.author_name.trim()
-          ? data.author_name.trim()
-          : null;
-      const authorUrl =
-        typeof data.author_url === 'string' && data.author_url.trim()
-          ? data.author_url.trim()
-          : null;
-      const watchPage = await watchPromise;
-      const extras = watchPage
-        ? extractYouTubeWatchExtras(watchPage.html)
-        : { durationSeconds: null as number | null };
-      return {
-        url: watchUrl,
-        title,
-        description: author,
-        image,
-        site: 'YouTube',
-        favicon: 'https://www.youtube.com/favicon.ico',
-        author,
-        authorUrl,
-        durationSeconds: extras.durationSeconds,
-      };
-    } catch {
+    const watchPromise = fetchText(watchUrl, 'text/html', YOUTUBE_WATCH_MAX_BYTES, signal).catch(() => null);
+    const raw = await fetchText(oembedUrl, 'application/json', OEMBED_MAX_BYTES, signal);
+    if (!raw) {
       return null;
-    } finally {
-      clearTimeout(timer);
     }
+    const data = JSON.parse(raw) as {
+      title?: unknown;
+      author_name?: unknown;
+      author_url?: unknown;
+      thumbnail_url?: unknown;
+    };
+    const str = (value: unknown) => (typeof value === 'string' ? value : null);
+    const title = clip(str(data.title), TITLE_MAX);
+    if (!title) {
+      return null;
+    }
+    const author = clip(str(data.author_name), TITLE_MAX);
+    const watchPage = await watchPromise;
+    return {
+      url: watchUrl,
+      title,
+      description: author,
+      image:
+        httpUrl(watchUrl, str(data.thumbnail_url)) ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      site: 'YouTube',
+      favicon: 'https://www.youtube.com/favicon.ico',
+      author,
+      authorUrl: httpUrl(watchUrl, str(data.author_url)),
+      durationSeconds: watchPage ? extractYouTubeDuration(watchPage) : null,
+    };
   }
 
-  async function fetchHtml(startUrl: string): Promise<{ html: string; finalUrl: string } | null> {
-    let current = startUrl;
-    for (let hop = 0; hop <= maxRedirects; hop += 1) {
-      await assertSafeUrl(current);
-      const { response } = await fetchOnce(current);
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location) {
-          return null;
-        }
-        try {
-          current = new URL(location, current).toString();
-        } catch {
-          return null;
-        }
-        continue;
-      }
-      if (!response.ok) {
-        return null;
-      }
-      const contentType = (response.headers.get('content-type') || '').toLowerCase();
-      if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
-        return null;
-      }
-      const html = await readBodyCapped(response);
-      return { html, finalUrl: current };
-    }
-    return null;
-  }
-
-  /**
-   * Resolve Open Graph / Twitter card metadata. Fail soft: returns null on any
-   * block, timeout, or parse miss. Results (including null) are cached briefly.
-   */
-  async function getPreview(rawUrl: string): Promise<LinkPreview | null> {
+  function normalizeTarget(rawUrl: string): string | null {
     const trimmed = typeof rawUrl === 'string' ? rawUrl.trim() : '';
     if (!trimmed) {
       return null;
     }
-
-    let cacheKey: string;
     try {
-      const parsed = await assertSafeUrl(trimmed);
-      cacheKey = parsed.toString();
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      if (fetcher.isBlockedHostname(parsed.hostname)) {
+        return null;
+      }
+      return parsed.toString();
     } catch {
       return null;
     }
+  }
 
+  /**
+   * Resolve Open Graph / Twitter card metadata. Fail soft: returns null on any
+   * block, timeout, or parse miss. Results (including null) are cached briefly;
+   * a refusal because the fetch queue is full is not.
+   */
+  async function getPreview(rawUrl: string, requester?: string): Promise<LinkPreview | null> {
+    const cacheKey = normalizeTarget(rawUrl);
+    if (!cacheKey) {
+      return null;
+    }
     const cached = cacheGet(cacheKey);
     if (cached !== undefined) {
       return cached;
     }
 
     try {
-      if (parseYouTubeVideoId(cacheKey)) {
-        const yt = await fetchYouTubeOEmbed(cacheKey);
-        if (yt) {
-          cacheSet(cacheKey, yt);
-          return yt;
+      const preview = await limited(requester, async () => {
+        const signal = AbortSignal.timeout(timeoutMs);
+        if (parseYouTubeVideoId(cacheKey)) {
+          const yt = await fetchYouTubeOEmbed(cacheKey, signal).catch(() => null);
+          if (yt) {
+            return yt;
+          }
         }
-      }
-
-      const fetched = await fetchHtml(cacheKey);
-      if (!fetched) {
-        cacheSet(cacheKey, null);
-        return null;
-      }
-      const preview = parsePreviewHtml(fetched.finalUrl, fetched.html);
-      if (!preview.title && !preview.description && !preview.image) {
-        cacheSet(cacheKey, null);
-        return null;
-      }
+        const fetched = await fetchHead(cacheKey, signal);
+        if (!fetched || (!fetched.title && !fetched.description && !fetched.image)) {
+          return null;
+        }
+        return fetched;
+      });
       cacheSet(cacheKey, preview);
       return preview;
-    } catch {
-      cacheSet(cacheKey, null);
+    } catch (error) {
+      if (!(error instanceof BusyError)) {
+        cacheSet(cacheKey, null);
+      }
       return null;
     }
   }
 
-  return { getPreview, isBlockedHostname, parsePreviewHtml, cacheGet, cacheSet };
+  /**
+   * An image or favicon from a preview this server produced, fetched through
+   * the same guards and re-typed from its magic bytes. Null for anything else.
+   */
+  async function getImage(rawUrl: string, requester?: string): Promise<PreviewImage | null> {
+    const url = normalizeTarget(rawUrl);
+    if (!url || !isKnownImage(url)) {
+      return null;
+    }
+    const cached = lruGet(imageCache, url);
+    if (cached) {
+      return cached;
+    }
+    try {
+      return await limited(requester, async () => {
+        const signal = AbortSignal.timeout(timeoutMs);
+        const { response } = await fetcher.fetch(url, {
+          signal,
+          headers: { Accept: 'image/png,image/jpeg,image/gif,image/webp,image/x-icon;q=0.9', 'User-Agent': USER_AGENT },
+        });
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {});
+          return null;
+        }
+        const bytes = await readCapped(response, IMAGE_MAX_BYTES + 1, signal);
+        if (bytes.byteLength > IMAGE_MAX_BYTES) {
+          return null;
+        }
+        const type = sniffPreviewImage(bytes.subarray(0, 12));
+        if (!type) {
+          return null;
+        }
+        const image = { bytes, type };
+        imageCacheSet(url, image);
+        return image;
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  return { getPreview, getImage, isBlockedHostname: fetcher.isBlockedHostname, parsePreviewHtml, cacheGet, cacheSet };
 }
 
 export type LinkPreviewService = ReturnType<typeof createLinkPreviewService>;

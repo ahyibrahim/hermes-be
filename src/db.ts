@@ -90,7 +90,7 @@ function toTombstone(message: MessageRecord, deletedAt: string): MessageRecord {
   };
 }
 
-function deleteOrphanFile(fileId: number): void {
+export function deleteOrphanFile(fileId: number): void {
   const avatar = getDb()
     .prepare('SELECT 1 AS ok FROM users WHERE avatar_file_id = ?')
     .get(fileId) as { ok: number } | undefined;

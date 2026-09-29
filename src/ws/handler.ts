@@ -25,6 +25,7 @@ import {
   WS_POLICY_VIOLATION,
   WS_UPGRADES_PER_MINUTE,
 } from './limits';
+import { wsFrameSchema, type LooseWsFrame } from './frames';
 
 export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
   const lastPong = new WeakMap<object, number>();
@@ -170,7 +171,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
         }
 
         const members = ctx.callMembers.get(slug);
-        if (!members?.has(user) || !members.has(to)) {
+        if (!members?.has(user) || !members.has(to) || !isRoomMember(slug, user) || !isRoomMember(slug, to)) {
           sendJson(socket, errorFrame('not in that call'));
           return null;
         }
@@ -203,7 +204,12 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
         }
 
         try {
-          const payload = JSON.parse(raw.toString());
+          const parsed = wsFrameSchema.safeParse(JSON.parse(raw.toString()));
+          if (!parsed.success) {
+            sendJson(socket, errorFrame('invalid message'));
+            return;
+          }
+          const payload = parsed.data as LooseWsFrame;
 
           if (payload.type === 'join_room') {
             if (!user) {
@@ -244,7 +250,15 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
               ctx.roomClients.set(room, new Set());
             }
 
-            client = { socket, room, user };
+            client = {
+              socket,
+              room,
+              user,
+              release: () => {
+                client = null;
+                room = null;
+              },
+            };
             ctx.roomClients.get(room)?.add(client);
 
             sendJson(socket, { type: 'joined_room', room });
@@ -327,7 +341,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
             }
 
             const members = ctx.callMembers.get(slug);
-            if (!members?.has(user)) {
+            if (!members?.has(user) || !isRoomMember(slug, user)) {
               sendJson(socket, errorFrame('not in that call'));
               return;
             }
@@ -557,7 +571,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
             }
 
             const session = ctx.watchSessions.get(slug);
-            if (!session) {
+            if (!isRoomMember(slug, user) || !session) {
               sendJson(socket, errorFrame('no active watch session'));
               return;
             }
@@ -659,15 +673,13 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
             return;
           }
 
-          sendJson(socket, errorFrame('unknown message type'));
+          sendJson(socket, errorFrame('invalid message'));
         } catch (error) {
           request.log.warn(
             { err: error, event: 'ws_error', user, room: room ?? undefined },
             'websocket message handler failed'
           );
-          const content =
-            error instanceof SyntaxError ? 'Invalid message payload' : (error as Error).message;
-          sendJson(socket, errorFrame(content));
+          sendJson(socket, errorFrame('invalid message'));
         }
       });
 

@@ -13,6 +13,8 @@ export type RoomSocket = {
   };
   room: string;
   user: string;
+  /** Clears the socket's own room binding when membership ends elsewhere. */
+  release?: () => void;
 };
 
 export type TrackedSocket = {
@@ -80,6 +82,23 @@ export function authRateLimitConfig(): { max: number; timeWindow: string } {
   return { max, timeWindow: '1 minute' };
 }
 
+/**
+ * A rate limit keyed on the signed-in user rather than the client address,
+ * so one member cannot use up a shared bucket. Unauthenticated requests fall
+ * back to the address and are rejected by the route anyway.
+ */
+export function perUserRateLimit(max: number, timeWindow = '1 minute') {
+  return {
+    max,
+    timeWindow,
+    keyGenerator(request: FastifyRequest): string {
+      const token = extractBearer(request);
+      const user = token ? findSessionUser(token) : null;
+      return user ? `user:${user}` : `ip:${request.ip}`;
+    },
+  };
+}
+
 export function sendJson(socket: { readyState?: number; send: (data: string) => void }, payload: unknown): boolean {
   try {
     socket.send(JSON.stringify(payload));
@@ -121,7 +140,7 @@ export function normalizeRoomSlug(room: string | undefined): string | null {
   }
 
   const slug = room.trim().toLowerCase();
-  if (!slug || isNumericRoom(slug)) {
+  if (!slug || slug.length > 512 || isNumericRoom(slug)) {
     return null;
   }
 
@@ -172,6 +191,8 @@ export type RouteContext = {
   broadcastToRoom: (room: string, payload: unknown, exceptSocket?: unknown) => void;
   broadcastToMembers: (room: string, payload: unknown, exceptUser?: string) => void;
   fanOutMembership: (slug: string, addedBy: string, added: string[]) => void;
+  evictFromRoom: (room: string, username: string) => void;
+  teardownRoom: (room: string, formerMembers: string[], deletedBy: string) => void;
   connectedUsers: (room: string) => string[];
   onlineUsernames: () => string[];
   touchTyping: (room: string, username: string) => void;

@@ -24,10 +24,11 @@ import {
 import { can } from '../authz';
 import { isUserColor } from '../colors';
 import { deleteOtherSessions, deleteSession } from '../sessions';
-import { createFileRecord, getFileRecord } from '../db';
+import { createFileRecord, deleteOrphanFile, getFileRecord } from '../db';
 import { sniffInlineImageFile, UPLOAD_RESPONSE_HEADERS } from '../file-type';
 import {
   authRateLimitConfig,
+  perUserRateLimit,
   AVATAR_TYPES,
   extractToken,
   parseIceServers,
@@ -62,8 +63,13 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         addUserToGeneralRoom(user.id);
         return { user: { id: user.id, username: user.username, role: user.role, color: user.color } };
       } catch (error) {
+        const message = (error as Error).message;
+        if (message.startsWith('username must') || message === 'username and password are required') {
+          reply.code(400);
+          return { error: message };
+        }
         reply.code(409);
-        return { error: (error as Error).message };
+        return { error: 'could not register' };
       }
     }
   );
@@ -240,7 +246,7 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     return { ok: true };
   });
 
-  fastify.post('/users/me/avatar', async (request, reply) => {
+  fastify.post('/users/me/avatar', { config: { rateLimit: perUserRateLimit(20) } }, async (request, reply) => {
     const username = resolveUser(request, reply);
     if (!username) {
       return { error: 'authentication required' };
@@ -267,33 +273,43 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
 
     const storedName = `${crypto.randomUUID()}`;
     const storedPath = path.join(ctx.filesDir, storedName);
-    await pipeline(data.file, fs.createWriteStream(storedPath));
+    let committed = false;
+    try {
+      await pipeline(data.file, fs.createWriteStream(storedPath));
 
-    if (data.file.truncated) {
-      fs.rmSync(storedPath, { force: true });
-      reply.code(413);
-      return { error: 'file too large' };
+      if (data.file.truncated) {
+        reply.code(413);
+        return { error: 'file too large' };
+      }
+
+      const sniffed = sniffInlineImageFile(storedPath);
+      if (!sniffed) {
+        reply.code(415);
+        return { error: 'avatar must be png, jpeg, webp, or gif' };
+      }
+
+      const size = fs.statSync(storedPath).size;
+      const file = createFileRecord(
+        `avatar:${username}`,
+        username,
+        data.filename || 'avatar',
+        sniffed,
+        size,
+        storedPath
+      );
+      committed = true;
+      const previousAvatar = me.avatar_file_id;
+      setAvatarFileId(me.id, file.id);
+      if (previousAvatar != null && previousAvatar !== file.id) {
+        deleteOrphanFile(previousAvatar);
+      }
+      request.log.info({ event: 'avatar_upload', user: username, id: file.id }, 'avatar uploaded');
+      return getProfile(username);
+    } finally {
+      if (!committed) {
+        fs.rmSync(storedPath, { force: true });
+      }
     }
-
-    const sniffed = sniffInlineImageFile(storedPath);
-    if (!sniffed) {
-      fs.rmSync(storedPath, { force: true });
-      reply.code(415);
-      return { error: 'avatar must be png, jpeg, webp, or gif' };
-    }
-
-    const size = fs.statSync(storedPath).size;
-    const file = createFileRecord(
-      `avatar:${username}`,
-      username,
-      data.filename || 'avatar',
-      sniffed,
-      size,
-      storedPath
-    );
-    setAvatarFileId(me.id, file.id);
-    request.log.info({ event: 'avatar_upload', user: username, id: file.id }, 'avatar uploaded');
-    return getProfile(username);
   });
 
   fastify.get('/users/:id/avatar', async (request: FastifyRequest<{ Params: { id: string } }>, reply) => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasControlChar, isUsername, messageHasForbiddenControl } from '../text';
 
 const reqStr = (msg: string) =>
   z.preprocess(
@@ -7,7 +8,12 @@ const reqStr = (msg: string) =>
   );
 
 export const registerSchema = z.object({
-  username: reqStr('username and password are required'),
+  username: z
+    .string({ message: 'username and password are required' })
+    .trim()
+    .min(1, 'username and password are required')
+    .transform((value) => value.toLowerCase())
+    .refine(isUsername, 'username must be 2-24 characters: a-z, 0-9, underscore'),
   password: z.string({ message: 'username and password are required' }).min(1, 'username and password are required'),
 });
 
@@ -43,7 +49,7 @@ export const usernameParamSchema = z.object({
 });
 
 export const createRoomSchema = z.object({
-  name: reqStr('name is required'),
+  name: reqStr('name is required').refine((value) => !hasControlChar(value), 'name contains invalid characters'),
   // Non-integers are ignored by the handler, matching the pre-Zod behavior.
   members: z.unknown().optional(),
 });
@@ -76,7 +82,10 @@ export const listMessagesQuerySchema = z.object({
 
 export const createMessageSchema = z.object({
   room: reqStr('room and content are required'),
-  content: reqStr('room and content are required'),
+  content: reqStr('room and content are required').refine(
+    (value) => !messageHasForbiddenControl(value),
+    'message contains invalid characters'
+  ),
 });
 
 export const deleteMessageParamSchema = z.object({

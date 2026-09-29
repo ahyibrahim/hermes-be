@@ -221,6 +221,61 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     });
   }
 
+  function detachRoomSockets(room: string, username: string): boolean {
+    const clients = roomClients.get(room);
+    let detached = false;
+    for (const client of [...(clients ?? [])]) {
+      if (client.user === username) {
+        clients!.delete(client);
+        client.release?.();
+        detached = true;
+      }
+    }
+    if (clients && clients.size === 0) {
+      roomClients.delete(room);
+    }
+    return detached;
+  }
+
+  /**
+   * Everything in memory that still ties `username` to `room`, ended in one
+   * place. Called after the membership row is gone (leave, kick).
+   */
+  function evictFromRoom(room: string, username: string): void {
+    callState.removeFromCall(room, username, true);
+    const watch = callState.watchSessions.get(room);
+    if (watch?.host === username) {
+      callState.endWatchSession(room, username);
+      sendToUser(username, { type: 'watch_ended', room, user: username });
+    } else {
+      callState.removeFromWatch(room, username, true);
+    }
+    callState.stopTyping(room, username);
+    if (detachRoomSockets(room, username)) {
+      broadcastToRoom(room, { type: 'user_left', room, user: username });
+    }
+  }
+
+  /** A deleted room: no call, watch, typing or socket state may outlive it. */
+  function teardownRoom(room: string, formerMembers: string[], deletedBy: string): void {
+    for (const user of callState.callRoster(room)) {
+      callState.removeFromCall(room, user, true);
+    }
+    if (callState.watchSessions.has(room)) {
+      callState.discardWatchSession(room);
+      for (const user of formerMembers) {
+        sendToUser(user, { type: 'watch_ended', room, user: deletedBy });
+      }
+    }
+    for (const user of formerMembers) {
+      callState.stopTyping(room, user, false);
+    }
+    for (const client of [...(roomClients.get(room) ?? [])]) {
+      client.release?.();
+    }
+    roomClients.delete(room);
+  }
+
   callState.setBroadcastHelpers(sendToUser, broadcastToMembers);
 
   const ctx: RouteContext = {
@@ -238,6 +293,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     broadcastToRoom,
     broadcastToMembers,
     fanOutMembership,
+    evictFromRoom,
+    teardownRoom,
     connectedUsers,
     onlineUsernames,
     touchTyping: callState.touchTyping,

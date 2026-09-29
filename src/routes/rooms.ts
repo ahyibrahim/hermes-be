@@ -6,6 +6,7 @@ import {
   deleteGroupRoom,
   getOrCreateDmRoom,
   getRoomBySlug,
+  getUserById,
   getUserByUsername,
   hideRoom,
   kickMember,
@@ -143,6 +144,15 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: result.error };
     }
 
+    ctx.evictFromRoom(slug, username);
+    const members = listRoomMembers(slug);
+    ctx.broadcastToMembers(slug, {
+      type: 'member_removed',
+      room: slug,
+      removed_by: username,
+      users: [username],
+      members,
+    });
     request.log.info({ event: 'room_leave', user: username, room: slug }, 'left room');
     return { ok: true, room: slug };
   });
@@ -256,7 +266,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       reply.code(404);
       return { error: 'room not found' };
     }
-    if (!can(actor, 'room.kick', { room })) {
+    const target = getUserById(parsed.data.userId);
+    if (!can(actor, 'room.kick', { room, actorIsMember: isRoomMember(slug, username), target })) {
       reply.code(403);
       return { error: 'forbidden' };
     }
@@ -270,6 +281,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       reply.code(result.status);
       return { error: result.error };
     }
+
+    ctx.evictFromRoom(slug, result.removed);
 
     const members = listRoomMembers(slug);
     const payload = {
@@ -319,7 +332,7 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         reply.code(404);
         return { error: 'room not found' };
       }
-      if (!can(actor, 'room.delete', { room })) {
+      if (!can(actor, 'room.delete', { room, actorIsMember: isRoomMember(slug, username) })) {
         reply.code(403);
         return { error: 'forbidden' };
       }
@@ -330,6 +343,7 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         return { error: result.error };
       }
 
+      ctx.teardownRoom(result.slug, result.members, username);
       const payload = { type: 'room_deleted', room: result.slug };
       for (const member of result.members) {
         ctx.sendToUser(member, payload);

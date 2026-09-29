@@ -16,8 +16,11 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
     addUserToGeneralRoom,
     createGroupRoom,
     getOrCreateDmRoom,
+    getRoomBySlug,
     getUserByUsername,
     isRoomMember,
+    kickMember,
+    leaveRoom,
     listRoomsForUser,
     addMembersToGroup,
   } = await import('./rooms');
@@ -35,7 +38,8 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
 
   const dm = getOrCreateDmRoom(alice.id, bob.id);
   assert.equal(dm.type, 'dm');
-  assert.equal(dm.slug, 'dm:alice:bob');
+  const dmSlug = `dm:${Math.min(alice.id, bob.id)}:${Math.max(alice.id, bob.id)}`;
+  assert.equal(dm.slug, dmSlug);
   assert.equal(getOrCreateDmRoom(bob.id, alice.id).slug, dm.slug);
 
   assert.equal(listRoomsForUser(alice.username).length, 3);
@@ -62,4 +66,29 @@ test('creates group rooms, memberships, and idempotent DMs', async () => {
   assert.equal(blocked.error, 'cannot add a system user');
 
   assert.throws(() => getOrCreateDmRoom(alice.id, alice.id), /cannot DM yourself/);
+
+  const kicked = kickMember(group.slug, bob.id);
+  assert.ok(!('error' in kicked));
+  assert.equal(isRoomMember(group.slug, 'bob'), false);
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, alice.id);
+
+  const readded = addMembersToGroup(group.slug, 'alice', [bob.id]);
+  assert.ok(!('error' in readded));
+  const left = leaveRoom(group.slug, 'alice');
+  assert.ok(!('error' in left));
+  assert.equal(isRoomMember(group.slug, 'alice'), false);
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, null);
+
+  const back = addMembersToGroup(group.slug, 'bob', [alice.id]);
+  assert.ok(!('error' in back));
+  assert.equal(getRoomBySlug(group.slug)?.creator_id, null);
+
+  const { getDb } = await import('./database');
+  const { migrateSchema } = await import('./schema');
+  getDb().prepare('UPDATE rooms SET slug = ? WHERE id = ?').run('dm:alice:bob', dm.id);
+  getDb().prepare('INSERT INTO messages (room, sender, content) VALUES (?, ?, ?)').run('dm:alice:bob', 'alice', 'old-dm');
+  migrateSchema(getDb());
+  assert.equal(getRoomBySlug(dmSlug)?.id, dm.id);
+  const moved = getDb().prepare('SELECT room FROM messages WHERE content = ?').get('old-dm') as { room: string };
+  assert.equal(moved.room, dmSlug);
 });
