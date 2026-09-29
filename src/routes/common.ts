@@ -80,6 +80,23 @@ export function authRateLimitConfig(): { max: number; timeWindow: string } {
   return { max, timeWindow: '1 minute' };
 }
 
+/**
+ * A rate limit keyed on the signed-in user rather than the client address,
+ * so one member cannot use up a shared bucket. Unauthenticated requests fall
+ * back to the address and are rejected by the route anyway.
+ */
+export function perUserRateLimit(max: number, timeWindow = '1 minute') {
+  return {
+    max,
+    timeWindow,
+    keyGenerator(request: FastifyRequest): string {
+      const token = extractBearer(request);
+      const user = token ? findSessionUser(token) : null;
+      return user ? `user:${user}` : `ip:${request.ip}`;
+    },
+  };
+}
+
 export function sendJson(socket: { readyState?: number; send: (data: string) => void }, payload: unknown): boolean {
   try {
     socket.send(JSON.stringify(payload));
