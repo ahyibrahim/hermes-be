@@ -78,7 +78,7 @@ fi
 
 step "Directories"
 info "creating ${CODE_DIR} and ${DATA_DIR}/files"
-install -d -o root -g root -m 0755 /srv/hermes /var/lib/hermes
+install -d -o root -g root -m 0755 /srv/hermes /srv/hermes/web /var/lib/hermes
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$CODE_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$DATA_DIR/files"
@@ -90,7 +90,8 @@ if [[ -f "$ENV_FILE" ]]; then
 else
   info "installing ${ENV_FILE} from deploy/hermes.env.example"
   # The example ships p1's values; rewrite them for this instance.
-  sed "s#/var/lib/hermes/p1#${DATA_DIR}#g" "$ENV_EXAMPLE" >"$ENV_FILE"
+  sed -e "s#/var/lib/hermes/p1#${DATA_DIR}#g" \
+    -e "s#/srv/hermes/web/p1#/srv/hermes/web/${INSTANCE}#g" "$ENV_EXAMPLE" >"$ENV_FILE"
   chown root:"$SERVICE_GROUP" "$ENV_FILE"
   # Readable by the service, not world-readable: it is where secrets would go.
   chmod 0640 "$ENV_FILE"

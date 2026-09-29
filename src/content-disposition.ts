@@ -1,13 +1,3 @@
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
-
-/** True when mime is image/* or the original name ends with a common image extension. */
-export function isImageFile(mime: string, originalName: string): boolean {
-  if (mime.toLowerCase().startsWith('image/')) {
-    return true;
-  }
-  return IMAGE_EXT.test(originalName);
-}
-
 /** ASCII-only filename for the legacy `filename=` parameter. */
 export function asciiFilename(originalName: string): string {
   const ascii = originalName

@@ -5,7 +5,8 @@ import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { createFileRecord, createMessage, getFileRecord, isRoomMember } from '../db';
 import { revealRoomMembers } from '../rooms';
-import { buildContentDisposition, isImageFile } from '../content-disposition';
+import { buildContentDisposition } from '../content-disposition';
+import { sniffInlineImageFile, UPLOAD_RESPONSE_HEADERS } from '../file-type';
 import { normalizeRoomSlug, resolveUser, RouteContext } from './common';
 import { fileIdParamSchema } from '../schemas';
 
@@ -112,8 +113,9 @@ export async function fileRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'file not found' };
     }
 
-    reply.header('Content-Type', file.mime);
-    const image = isImageFile(file.mime, file.original_name);
+    const image = sniffInlineImageFile(file.path);
+    reply.headers(UPLOAD_RESPONSE_HEADERS);
+    reply.header('Content-Type', image ?? 'application/octet-stream');
     reply.header(
       'Content-Disposition',
       buildContentDisposition(image ? 'inline' : 'attachment', file.original_name)

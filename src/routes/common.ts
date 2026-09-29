@@ -101,23 +101,14 @@ export function extractBearer(request: FastifyRequest): string | undefined {
   return undefined;
 }
 
+/**
+ * REST takes the token from `Authorization: Bearer` only. A token in the URL
+ * turns any link into a login, and one in the body is sent by plain HTML forms.
+ * `/ws` still reads `?token=` itself because browsers cannot set headers on a
+ * WebSocket upgrade.
+ */
 export function extractToken(request: FastifyRequest): string | undefined {
-  const bearer = extractBearer(request);
-  if (bearer) {
-    return bearer;
-  }
-
-  const query = request.query as { token?: string };
-  if (typeof query?.token === 'string' && query.token.trim()) {
-    return query.token.trim();
-  }
-
-  const body = request.body as { token?: string } | undefined;
-  if (body && typeof body.token === 'string' && body.token.trim()) {
-    return body.token.trim();
-  }
-
-  return undefined;
+  return extractBearer(request);
 }
 
 export function isNumericRoom(room: string): boolean {

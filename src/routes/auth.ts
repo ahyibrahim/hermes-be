@@ -25,6 +25,7 @@ import { can } from '../authz';
 import { isUserColor } from '../colors';
 import { deleteOtherSessions, deleteSession } from '../sessions';
 import { createFileRecord, getFileRecord } from '../db';
+import { sniffInlineImageFile, UPLOAD_RESPONSE_HEADERS } from '../file-type';
 import {
   authRateLimitConfig,
   AVATAR_TYPES,
@@ -274,12 +275,19 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'file too large' };
     }
 
+    const sniffed = sniffInlineImageFile(storedPath);
+    if (!sniffed) {
+      fs.rmSync(storedPath, { force: true });
+      reply.code(415);
+      return { error: 'avatar must be png, jpeg, webp, or gif' };
+    }
+
     const size = fs.statSync(storedPath).size;
     const file = createFileRecord(
       `avatar:${username}`,
       username,
       data.filename || 'avatar',
-      mime,
+      sniffed,
       size,
       storedPath
     );
@@ -313,7 +321,14 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'avatar not found' };
     }
 
-    reply.header('Content-Type', file.mime);
+    const image = sniffInlineImageFile(file.path);
+    if (!image) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+
+    reply.headers(UPLOAD_RESPONSE_HEADERS);
+    reply.header('Content-Type', image);
     reply.header('Content-Disposition', 'inline');
     return reply.send(fs.createReadStream(file.path));
   });

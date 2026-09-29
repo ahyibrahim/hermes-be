@@ -130,6 +130,20 @@ test('v0.7.0 REST: profile, password change, avatar, first user is admin', async
   });
   assert.equal(rejected.status, 415);
 
+  const disguised = new FormData();
+  disguised.append(
+    'file',
+    new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], { type: 'image/png' }),
+    'me.png'
+  );
+  const disguisedUpload = await fetch(`${origin}/users/me/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${aliceToken}` },
+    body: disguised,
+  });
+  assert.equal(disguisedUpload.status, 415, 'avatar type comes from the bytes, not the claimed MIME');
+  assert.equal(avatar.headers.get('x-content-type-options'), 'nosniff');
+
   await app.close();
 });
 
@@ -160,4 +174,34 @@ test('v0.7.0 REST: auth routes are rate limited', async () => {
   assert.equal(lastStatus, 429);
 
   await app.close();
+});
+
+test('auth rate limit keys on the forwarded client, not the loopback proxy', async () => {
+  const rateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-v07-xff-'));
+  process.env.HERMES_DB_PATH = path.join(rateDir, 'hermes.db');
+  process.env.HERMES_FILES_DIR = path.join(rateDir, 'files');
+
+  const { closeDb } = await import('./database');
+  closeDb();
+  const { createApp } = await import('./app');
+  const { app } = await createApp();
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  const origin = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+
+  const attempt = (client: string) =>
+    fetch(`${origin}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': client },
+      body: JSON.stringify({ username: 'ghost', password: 'nope' }),
+    });
+
+  try {
+    for (let i = 0; i < 10; i += 1) {
+      assert.equal((await attempt('100.64.0.10')).status, 401);
+    }
+    assert.equal((await attempt('100.64.0.10')).status, 429, 'the noisy client is limited');
+    assert.equal((await attempt('100.64.0.11')).status, 401, 'another client keeps its own budget');
+  } finally {
+    await app.close();
+  }
 });

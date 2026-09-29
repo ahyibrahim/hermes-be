@@ -96,7 +96,7 @@ It does **not** start the service, because there is no code in
 (`DEPLOY FAILED: /etc/hermes/p1.env does not exist`). Run this setup first.
 
 Review `/etc/hermes/p1.env` afterwards, particularly `PORT`. The example already
-sets `HERMES_WEB_DIR=/var/lib/hermes/p1/web`. If the env file already existed
+sets `HERMES_WEB_DIR=/srv/hermes/web/p1`. If the env file already existed
 from an earlier run, `setup-host.sh` will not overwrite it — add `HERMES_WEB_DIR`
 and `LOG_LEVEL=info` by hand if they are absent.
 
@@ -321,6 +321,47 @@ If `s1` looks wrong, do not deploy `p1`. `s1` can be torn down later
 you are sure). Restoring `p1` from `hermes.db.pre-v0.6.0` is a stop, copy
 back, start — only needed if the production migration itself goes badly.
 
+### v0.27.0: loopback, web bundle move, unit hardening
+
+Three one-time host changes. `deploy.sh` does not reinstall the unit file, and
+it refuses to deploy while `HERMES_WEB_DIR` still points into the data
+directory, so do these before `deploy.sh`. Rehearse on `s1` first: the new
+unit adds `SystemCallFilter=@system-service` and `IPAddressDeny`, and a
+filter that is too tight shows up as the service failing to start.
+
+1. Install the new unit and reload:
+
+   ```sh
+   sudo install -o root -g root -m 0644 deploy/hermes-be@.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+2. Point the web bundle at its new home in `/etc/hermes/p1.env`:
+
+   ```sh
+   sudo install -d -o root -g root -m 0755 /srv/hermes/web
+   sudo sed -i 's#^HERMES_WEB_DIR=.*#HERMES_WEB_DIR=/srv/hermes/web/p1#' /etc/hermes/p1.env
+   ```
+
+   `HERMES_HOST` is optional; unset means `127.0.0.1`.
+
+3. Deploy as usual. `deploy.sh` now also sets the data directory to `0750` and
+   the database, its WAL/SHM, any `hermes.db.pre-*` backups and uploads to
+   `0600` on every run.
+
+Afterwards:
+
+```sh
+sudo rm -rf /var/lib/hermes/p1/web
+stat -c '%a %U %n' /var/lib/hermes/p1 /var/lib/hermes/p1/hermes.db*
+ss -tlnp | grep ':3000'          # 127.0.0.1:3000 only
+tailscale serve status           # still -> http://127.0.0.1:3000
+systemd-analyze security hermes-be@p1
+```
+
+Anyone who used `http://ying-1:3000` (including the CLI's old default) now
+has to use `https://ying-1.tail18942a.ts.net`.
+
 ### Rolling back
 
 Redeploy the previous tag:
@@ -369,13 +410,15 @@ template, carrying `p1`'s values.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3000` | Port the server binds, on `0.0.0.0`. Give a second instance a different one. |
+| `PORT` | `3000` | Port the server binds. Give a second instance a different one. |
+| `HERMES_HOST` | `127.0.0.1` | Address the server binds. Loopback only: Tailscale Serve is the way in, and `X-Forwarded-For` is trusted from loopback alone. Do not set `0.0.0.0` on a host with other people on its LAN. |
+| `HERMES_ALLOWED_ORIGINS` | unset | Comma-separated extra origins allowed to open `/ws` (for example `http://ying-1:5173`). Same-host and loopback origins, and clients that send no `Origin`, are always allowed. |
 | `HERMES_DB_PATH` | `./data/hermes.db` | SQLite file. Created if absent, migrated in place on every start. Must be inside the unit's `ReadWritePaths`. `p1` uses `/var/lib/hermes/p1/hermes.db`. |
 | `HERMES_FILES_DIR` | `./data/files/` | Upload directory, created if absent. `p1` uses `/var/lib/hermes/p1/files`. |
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Values that are not a positive number fall back to the default. |
 | `LOG_LEVEL` | `info` | Pino level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`. JSON to stdout. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. `deploy.sh` rewrites this on every deploy; no need to set it by hand. Unset means `/health` asks git, then reports `unknown`. |
-| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle, served from this same process. Unset is a no-op (backend-only). `p1` uses `/var/lib/hermes/p1/web`. When this is set, `deploy.sh` requires `HERMES_WEB_BUNDLE`. |
+| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle, served from this same process. Unset is a no-op (backend-only). `p1` uses `/srv/hermes/web/p1`, root-owned; `deploy.sh` refuses a path inside the data directory. When this is set, `deploy.sh` requires `HERMES_WEB_BUNDLE`. |
 
 Note that `HERMES_SESSION_TTL_DAYS` is now the real logout interval. Before
 v0.3.0 tokens lived in an in-memory `Map`, so every restart signed everyone out;

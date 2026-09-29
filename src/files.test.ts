@@ -159,6 +159,43 @@ test('file upload, download, and live room broadcast', async () => {
     assert.match(disposition, /filename="[\x20-\x7E]+"/);
     assert.match(disposition, /filename\*=UTF-8''/);
     assert.match(disposition, /^[\x20-\x7E]+$/);
+    assert.equal(imgDl.headers.get('content-type'), 'image/jpeg');
+    assert.equal(imgDl.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(imgDl.headers.get('content-security-policy') ?? '', /sandbox/);
+
+    async function uploadAs(bytes: Buffer, type: string, name: string): Promise<number> {
+      const form = new FormData();
+      form.append('room', share.slug);
+      form.append('file', new Blob([bytes], { type }), name);
+      const response = await fetch(`${origin}/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${alice.token}` },
+        body: form,
+      });
+      assert.equal(response.status, 200);
+      return ((await response.json()) as { file: { id: number } }).file.id;
+    }
+
+    const hostile = [
+      await uploadAs(
+        Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+        'image/svg+xml',
+        'logo.svg'
+      ),
+      await uploadAs(Buffer.from('<!doctype html><script>alert(1)</script>'), 'text/html', 'photo.png'),
+      await uploadAs(Buffer.from('<!doctype html><script>alert(1)</script>'), 'image/png', 'photo.png'),
+    ];
+    for (const id of hostile) {
+      const res = await fetch(`${origin}/files/${id}`, { headers: { Authorization: `Bearer ${bob.token}` } });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/octet-stream', `file ${id} must not keep its claimed type`);
+      assert.match(res.headers.get('content-disposition') ?? '', /^attachment;/, `file ${id} must download`);
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+      assert.match(res.headers.get('content-security-policy') ?? '', /sandbox/);
+    }
+
+    const viaQuery = await fetch(`${origin}/files/${hostile[0]}?token=${encodeURIComponent(bob.token)}`);
+    assert.equal(viaQuery.status, 401, 'a download link must not carry a login');
 
     a.socket.close();
     b.socket.close();

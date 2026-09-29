@@ -1,16 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  asciiFilename,
-  buildContentDisposition,
-  encodeRfc5987,
-  isImageFile,
-} from './content-disposition';
+import { asciiFilename, buildContentDisposition, encodeRfc5987 } from './content-disposition';
+import { sniffInlineImage } from './file-type';
 
-test('isImageFile trusts image mime and common extensions', () => {
-  assert.equal(isImageFile('image/jpeg', 'x.bin'), true);
-  assert.equal(isImageFile('application/octet-stream', 'Screenshot.jpg'), true);
-  assert.equal(isImageFile('text/plain', 'note.txt'), false);
+const bytes = (...values: Array<number | string>): Uint8Array =>
+  Uint8Array.from(
+    values.flatMap((value) => (typeof value === 'string' ? Array.from(value, (c) => c.charCodeAt(0)) : [value]))
+  );
+
+test('sniffInlineImage recognises png, jpeg, gif and webp by magic bytes', () => {
+  assert.equal(sniffInlineImage(bytes(0x89, 'PNG', 0x0d, 0x0a, 0x1a, 0x0a)), 'image/png');
+  assert.equal(sniffInlineImage(bytes(0xff, 0xd8, 0xff, 0xe0)), 'image/jpeg');
+  assert.equal(sniffInlineImage(bytes('GIF89a')), 'image/gif');
+  assert.equal(sniffInlineImage(bytes('GIF87a')), 'image/gif');
+  assert.equal(sniffInlineImage(bytes('RIFF', 0, 0, 0, 0, 'WEBP')), 'image/webp');
+});
+
+test('sniffInlineImage refuses svg, html, bmp and short input', () => {
+  assert.equal(sniffInlineImage(bytes('<svg xmlns="http://www.w3.org/2000/svg">')), null);
+  assert.equal(sniffInlineImage(bytes('<!doctype html><script>')), null);
+  assert.equal(sniffInlineImage(bytes('BM')), null);
+  assert.equal(sniffInlineImage(bytes('RIFF', 0, 0, 0, 0, 'WAVE')), null);
+  assert.equal(sniffInlineImage(bytes(0xff, 0xd8)), null);
+  assert.equal(sniffInlineImage(new Uint8Array()), null);
 });
 
 test('asciiFilename replaces non-ASCII including U+202F', () => {

@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.26.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.27.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -44,7 +44,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.23.0 - Previews and transcript polish (live on `p1`)
 - [x] v0.24.0 - Fluid UI and interaction overhaul (live on `p1`)
 - [x] v0.25.0 - Maintainability hardening (live on `p1`)
-- [ ] v0.26.0 - Safety net and phone rails
+- [x] v0.26.0 - Safety net and phone rails (live on `p1`)
+- [ ] v0.27.0 - Hardening: exposure and content
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1272,6 +1273,57 @@ numbered lists and ~~strikethrough~~; not notice anything else changed.
 - Phone rail tap target and drawer jump (issue to file)
 - Markdown lists and strikethrough (issue to file)
 
+## v0.27.0 - Hardening: exposure and content
+
+First of several hardening releases ahead of guest access. Narrows what the
+server listens on, tightens how uploads and markdown are displayed, and sets
+browser security headers. Nothing new for friends to learn; a friend should
+notice nothing except that the CLI now defaults to the HTTPS address.
+
+### Locked
+
+- **Listen address.** `HERMES_HOST`, default `127.0.0.1`. Tailscale Serve
+  already proxies to loopback. Fastify trusts `X-Forwarded-For` from loopback
+  only, so per-client rate limits key on the real client (checked through
+  Serve on `q1`).
+- **Uploads.** The server decides a file's type from its magic bytes
+  (`src/file-type.ts`). Only PNG, JPEG, GIF and WebP display inline;
+  everything else is `application/octet-stream` as an attachment. File and
+  avatar responses send `nosniff`, a sandbox CSP and
+  `Cross-Origin-Resource-Policy: same-origin`; avatars must be one of the
+  four raster types. REST routes take the token from the `Authorization`
+  header only; `/ws` keeps `?token=`. The web preview falls back to the file
+  row when an image fails to decode.
+- **Headers.** `src/security-headers.ts` sets `nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  HSTS, COOP `same-origin`, `Permissions-Policy` and a baseline CSP. The web
+  app ships its own CSP from SvelteKit (`kit.csp`, hashed inline script,
+  YouTube allowed for watch-together).
+- **WebSocket limits.** 64 KiB frames, a per-socket token bucket (200 burst,
+  50/s), 16 sockets per user (oldest closed with 1008), 60 upgrades a minute,
+  and an `Origin` check on upgrade (`HERMES_ALLOWED_ORIGINS` for extra
+  origins, e.g. Vite dev from another device).
+- **Errors.** 5xx responses return `internal server error` and a request id;
+  details stay in the log. `/health` is unchanged (deploy verification reads
+  `version` and `commit`); the guest gateway will not serve it.
+- **Deploy.** `deploy.sh` keeps the data directory `0750` and the database
+  `0600`, installs the web bundle root-owned under `/srv/hermes/web/<inst>`
+  and refuses a web directory inside the data directory. The unit adds
+  `UMask=0077`, `SystemCallFilter=@system-service`, an empty capability set,
+  `ProtectProc=invisible`, `InaccessiblePaths=/etc/hermes` and blocks
+  private and tailnet address ranges. See `DEPLOY.md` for the one-time `p1`
+  env change.
+- **Markdown preview.** A private DOMPurify config: no styles, classes, ids,
+  forms, frames or SVG; links are http(s) or mailto and open in a new tab;
+  remote images become text; the preview cannot paint outside its box.
+- **CLI.** Defaults to `https://ying-1.tail18942a.ts.net` and warns on a
+  plain-HTTP non-loopback URL. The web dev proxy defaults to the same.
+- Tested on a separate `q1` instance behind Serve (`:4443`), desktop Firefox
+  and iOS Safari.
+- Not in scope: link-preview fetcher, room and call authorization, Fastify 5,
+  session hashing and roles (v0.28.0 through v0.30.0). Announcement in
+  `docs/announcements/v0.27.0.md`.
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -1291,3 +1343,6 @@ label until then.
   different UI (always-on tiles vs opt-in preview)
 - Watch together: non-YouTube providers (Twitch, Vimeo, …) after v0.20.0
 - Search, read receipts, reactions (typing moved to v0.22.0)
+- Phone transcript: sending a message makes the transcript bob while it
+  settles, and with the keyboard open it scrolls past the end
+  (`apps/web/src/lib/chat/scroll-pin.svelte.ts`; issue to file)
