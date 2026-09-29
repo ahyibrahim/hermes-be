@@ -204,8 +204,13 @@ test('leaving or being kicked drops call, share, watch and room sockets', async 
     const daveStillDenied = await readOfType(daveSock.read, 'error');
     assert.match(daveStillDenied.content ?? '', /no active watch session/i);
 
+    const aliceSock = await connect(alice.token);
+    assert.equal((await aliceSock.read()).type, 'connected');
     const left = await json('POST', '/rooms/leave', { room: slug }, bob.token);
     assert.equal(left.status, 200);
+    const aliceSawLeave = await readOfType(aliceSock.read, 'member_removed');
+    assert.deepEqual(aliceSawLeave.users, ['bob']);
+    assert.equal(aliceSawLeave.members?.includes('bob'), false);
     const afterLeave = (await json('GET', '/rooms', undefined, alice.token)).data as Array<{
       slug: string;
       creator_id: number | null;
@@ -225,6 +230,7 @@ test('leaving or being kicked drops call, share, watch and room sockets', async 
     carolSock.socket.close();
     bobSock.socket.close();
     daveSock.socket.close();
+    aliceSock.socket.close();
   } finally {
     await app.close();
   }

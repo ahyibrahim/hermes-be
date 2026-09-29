@@ -145,6 +145,14 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     }
 
     ctx.evictFromRoom(slug, username);
+    const members = listRoomMembers(slug);
+    ctx.broadcastToMembers(slug, {
+      type: 'member_removed',
+      room: slug,
+      removed_by: username,
+      users: [username],
+      members,
+    });
     request.log.info({ event: 'room_leave', user: username, room: slug }, 'left room');
     return { ok: true, room: slug };
   });

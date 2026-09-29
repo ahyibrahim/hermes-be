@@ -1329,12 +1329,11 @@ notice nothing except that the CLI now defaults to the HTTPS address.
 
 Second hardening release. Rewrites the link-preview fetcher, makes leaving,
 kicking and deleting a room take effect everywhere at once, and tightens what
-names and messages may contain. The visible change for friends is a steadier
-phone transcript.
+names and messages may contain. The visible change for friends is link-preview
+images loaded through Hermes.
 
-After this release a friend should: send a message on a phone without the
-transcript bobbing, and not scroll past the end with the keyboard open; see
-link previews as before, with images now loaded through Hermes.
+After this release a friend should: see link previews as before, with images
+now loaded through Hermes. The phone transcript is unchanged from v0.27.
 
 ### Locked
 
@@ -1350,7 +1349,8 @@ link previews as before, with images now loaded through Hermes.
   web client from Hermes. The web CSP drops `https:` from `img-src`.
 - **Removal.** Leaving or being kicked from a room ends that user's part in
   the room's call, screen share, watch session and typing state, and detaches
-  their sockets from the room. Deleting a room tears all of that down. Call
+  their sockets from the room. Remaining members see the new member list
+  without reloading. Deleting a room tears all of that down. Call
   signaling and screen share re-check room membership. Watch control and
   ending a watch session require membership. A group creator keeps kick and
   delete rights only while a member, and cannot kick admins.
@@ -1363,9 +1363,7 @@ link previews as before, with images now loaded through Hermes.
 - **Housekeeping.** Replaced avatars and aborted uploads are deleted. Upload
   rate limit per user. Logout clears drafts and in-memory caches. Downloads
   no longer open as same-origin `blob:` documents.
-- **Phone transcript.** Sending no longer bobs the transcript, and the
-  keyboard no longer lets it scroll past the end
-  (`apps/web/src/lib/chat/scroll-pin.svelte.ts`).
+- **Phone transcript.** Unchanged from v0.27.
 - Tested on `q1` behind Serve (`:4443`) before `p1`.
 - Not in scope: Fastify 5 and signed deploys (v0.29.0); session hashing,
   roles, add-member consent and user-list scoping (v0.30.0).
@@ -1389,3 +1387,6 @@ label until then.
   different UI (always-on tiles vs opt-in preview)
 - Watch together: non-YouTube providers (Twitch, Vimeo, …) after v0.20.0
 - Search, read receipts, reactions (typing moved to v0.22.0)
+- Phone transcript: sending a message makes the transcript bob while it
+  settles, and with the keyboard open it scrolls past the end
+  (`apps/web/src/lib/chat/scroll-pin.svelte.ts`)
