@@ -34,15 +34,41 @@ export interface FileRecord {
   created_at: string;
 }
 
-export function listMessages(room: string): MessageRecord[] {
-  const stmt = getDb().prepare(
-    'SELECT id, room, sender, content, created_at, file_id, deleted_at FROM messages WHERE room = ? ORDER BY id ASC'
-  );
+/** Latest page returned by GET /messages when `before` is omitted. */
+export const MESSAGE_PAGE_SIZE = 100;
 
-  return (stmt.all(room) as MessageRecord[]).map((message) => ({
-    ...message,
-    created_at: toIsoTimestamp(message.created_at),
-  }));
+export interface MessagePage {
+  messages: MessageRecord[];
+  has_more: boolean;
+}
+
+const messageColumns =
+  'id, room, sender, content, created_at, file_id, deleted_at';
+
+export function listMessages(room: string, before?: number, limit = MESSAGE_PAGE_SIZE): MessagePage {
+  const pageSize = Math.min(Math.max(Math.trunc(limit) || MESSAGE_PAGE_SIZE, 1), MESSAGE_PAGE_SIZE);
+  const rows =
+    before == null
+      ? (getDb()
+          .prepare(
+            `SELECT ${messageColumns} FROM messages WHERE room = ? ORDER BY id DESC LIMIT ?`
+          )
+          .all(room, pageSize + 1) as MessageRecord[])
+      : (getDb()
+          .prepare(
+            `SELECT ${messageColumns} FROM messages WHERE room = ? AND id < ? ORDER BY id DESC LIMIT ?`
+          )
+          .all(room, before, pageSize + 1) as MessageRecord[]);
+
+  const hasMore = rows.length > pageSize;
+  const page = (hasMore ? rows.slice(0, pageSize) : rows).reverse();
+  return {
+    messages: page.map((message) => ({
+      ...message,
+      created_at: toIsoTimestamp(message.created_at),
+    })),
+    has_more: hasMore,
+  };
 }
 
 export function createMessage(

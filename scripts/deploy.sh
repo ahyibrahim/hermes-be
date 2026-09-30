@@ -37,9 +37,21 @@ environment:
   HERMES_REPO_URL         git remote to fetch from
                           (default https://github.com/ahyibrahim/hermes-be.git)
   HERMES_HEALTH_TIMEOUT   seconds to wait for /health (default 90)
-  HERMES_WEB_BUNDLE       path to the SvelteKit apps/web/build directory, or a
-                          .tar.gz of it. Required when HERMES_WEB_DIR is set
-                          in the instance env file; ignored when it is unset.
+  HERMES_FE_REPO_URL      hermes-fe remote to build the web app from
+                          (default https://github.com/ahyibrahim/hermes-fe.git).
+                          The same tag is checked out and verified.
+  HERMES_WEB_BUNDLE       optional path to a SvelteKit apps/web/build directory,
+                          or a .tar.gz of it. When set, skips the hermes-fe
+                          build and installs this tree instead.
+  HERMES_ALLOWED_SIGNERS  SSH allowed-signers file used to verify tags
+                          (default /etc/hermes/allowed_signers). Required for
+                          v0.29.0 and newer.
+  HERMES_NODE_BIN         Node binary for install, build, and this instance.
+                          Default: the first of /opt/hermes/node, /usr/local,
+                          /usr that is Node 20.12+ or 22. Older /usr/bin/node
+                          is left in place.
+  HERMES_NODE_PREFIX      Node prefix to copy into /opt/hermes/node when none
+                          of the defaults is new enough.
 USAGE
   exit 2
 }
@@ -69,13 +81,17 @@ fi
 SERVICE_USER="hermes"
 SERVICE_GROUP="hermes"
 REPO_URL="${HERMES_REPO_URL:-https://github.com/ahyibrahim/hermes-be.git}"
+FE_REPO_URL="${HERMES_FE_REPO_URL:-https://github.com/ahyibrahim/hermes-fe.git}"
 CHECKOUT="/srv/hermes/${INSTANCE}/hermes-be"
+FE_CHECKOUT="/srv/hermes/${INSTANCE}/hermes-fe"
+ALLOWED_SIGNERS="${HERMES_ALLOWED_SIGNERS:-/etc/hermes/allowed_signers}"
 ENV_FILE="/etc/hermes/${INSTANCE}.env"
 UNIT="hermes-be@${INSTANCE}"
 HEALTH_TIMEOUT="${HERMES_HEALTH_TIMEOUT:-90}"
 
 DEPLOYED_COMMIT=""
 DEPLOYED_VERSION=""
+FE_BUNDLE_DIR=""
 
 step() { printf '\n==> %s\n' "$1"; }
 info() { printf '    %s\n' "$1"; }
@@ -92,12 +108,118 @@ as_service_user() {
   fi
 }
 
+# A local mirror is owned by the operator. `git -c safe.directory=...` does
+# not reach the local upload-pack Git 2.43 spawns for ls-remote and fetch, so
+# that process still refuses the directory. A global config file, pointed at
+# by GIT_CONFIG_GLOBAL, is read there.
+SAFE_GITCONFIG=""
+
+write_safe_gitconfig() {
+  local url wrote=0
+  local path="/srv/hermes/${INSTANCE}/safe.directory.gitconfig"
+  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "/srv/hermes/${INSTANCE}"
+  rm -f "$path"
+  for url in "$REPO_URL" "$FE_REPO_URL"; do
+    [[ "$url" == /* && -d "$url" ]] || continue
+    git config --file "$path" --add safe.directory "$url"
+    wrote=1
+  done
+  if [[ "$wrote" -eq 0 ]]; then
+    SAFE_GITCONFIG=""
+    return 0
+  fi
+  chown "root:${SERVICE_GROUP}" "$path"
+  chmod 0640 "$path"
+  SAFE_GITCONFIG="$path"
+}
+
+git_as_service() {
+  if [[ -n "$SAFE_GITCONFIG" ]]; then
+    as_service_user env GIT_CONFIG_GLOBAL="$SAFE_GITCONFIG" git "$@"
+  else
+    as_service_user git "$@"
+  fi
+}
+
 # npm must run in CHECKOUT. This script is invoked from the operator's working
 # tree (or, later, a runner workspace). The hermes user cannot read /home/ai
 # (mode 750), so a bare `npm ci` there fails with "no package-lock.json" even
 # though the production checkout has one. git already uses -C; npm gets --prefix.
+# Node 18 cannot load the web toolchain (`styleText` from node:util). The
+# service unit hard-codes /usr/bin/node, which on this host is 18. Put a new
+# enough binary on PATH for npm, and point only this instance at it.
+NODE_BIN=""
+
+node_version_ok() {
+  "$1" -e '
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    const ok = major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
+    process.exit(ok ? 0 : 1);
+  ' >/dev/null 2>&1
+}
+
+service_path() {
+  printf '%s' "$(dirname "$NODE_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+ensure_node() {
+  local candidate src="" dir
+  if [[ -n "${HERMES_NODE_BIN:-}" ]]; then
+    node_version_ok "$HERMES_NODE_BIN" ||
+      fail "HERMES_NODE_BIN ${HERMES_NODE_BIN} must be Node 20.12+ or 22+"
+    NODE_BIN="$HERMES_NODE_BIN"
+  else
+    for candidate in /opt/hermes/node/bin/node /usr/local/bin/node /usr/bin/node; do
+      [[ -x "$candidate" ]] || continue
+      if node_version_ok "$candidate"; then
+        NODE_BIN="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$NODE_BIN" ]]; then
+    if [[ -n "${HERMES_NODE_PREFIX:-}" && -x "${HERMES_NODE_PREFIX}/bin/node" ]]; then
+      src="$HERMES_NODE_PREFIX"
+    else
+      for dir in /home/ai/.nvm/versions/node/v20.* /home/ai/.nvm/versions/node/v22.*; do
+        [[ -x "$dir/bin/node" ]] || continue
+        if node_version_ok "$dir/bin/node"; then
+          src="$dir"
+          break
+        fi
+      done
+    fi
+    [[ -n "$src" && -d "$src" ]] ||
+      fail "need Node 20.12+ or 22+; /usr/bin/node is $(/usr/bin/node -v 2>/dev/null || echo missing)"
+    step "Installing Node from ${src} to /opt/hermes/node"
+    rm -rf /opt/hermes/node
+    mkdir -p /opt/hermes
+    cp -a "$src" /opt/hermes/node
+    chmod -R a+rX /opt/hermes/node
+    NODE_BIN="/opt/hermes/node/bin/node"
+    node_version_ok "$NODE_BIN" || fail "copied Node at ${NODE_BIN} failed the version check"
+  fi
+
+  info "node $("$NODE_BIN" -v) (${NODE_BIN})"
+
+  # Only the instance being deployed. The shared template still starts
+  # /usr/bin/node, so other instances are unchanged.
+  if [[ "$(readlink -f "$NODE_BIN")" != "$(readlink -f /usr/bin/node)" ]]; then
+    install -d -m 0755 "/etc/systemd/system/${UNIT}.service.d"
+    cat >"/etc/systemd/system/${UNIT}.service.d/node.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=${NODE_BIN} dist/server.js
+EOF
+    systemctl daemon-reload
+    info "instance ${INSTANCE} starts with ${NODE_BIN}"
+  fi
+}
+
 npm_in_checkout() {
   as_service_user env HOME="$CHECKOUT" npm_config_cache="${CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
     npm --prefix "$CHECKOUT" "$@"
 }
 
@@ -134,19 +256,81 @@ check_prerequisites() {
   info "instance ${INSTANCE} listens on port ${PORT}"
 }
 
+# v0.29.0 and newer tags, including release candidates, must be SSH-signed.
+# Older tags stay deployable unsigned so a rollback still works.
+tag_needs_signature() {
+  local ver="${1#v}"
+  ver="${ver%%-*}"
+  local major=0 minor=0 patch=0
+  IFS=. read -r major minor patch <<<"$ver"
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+  [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]] || return 0
+  if (( major > 0 || minor > 29 || (minor == 29 && patch >= 0) )); then
+    return 0
+  fi
+  return 1
+}
+
+# Refuse when this checkout already has the tag pointing at a different object.
+# Git runs as the service user so a root-owned script can read the checkout.
+assert_tag_unmoved() {
+  local repo="$1" url="$2" tag="$3"
+  local remote local_sha
+  remote="$(git_as_service -C "$repo" ls-remote origin "refs/tags/${tag}")"
+  remote="$(printf '%s\n' "$remote" | awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }')"
+  [[ -n "$remote" ]] || fail "tag ${tag} does not exist on ${url}. Push the tag first."
+  local_sha="$(as_service_user git -C "$repo" rev-parse --verify --quiet "refs/tags/${tag}" || true)"
+  if [[ -n "$local_sha" && "$local_sha" != "$remote" ]]; then
+    fail "tag ${tag} moved (${local_sha} -> ${remote}); refusing to deploy it"
+  fi
+}
+
+verify_release_tag() {
+  local repo="$1" tag="$2"
+  if ! tag_needs_signature "$tag"; then
+    info "tag ${tag} predates signed deploys; signature not required"
+    return 0
+  fi
+  [[ -f "$ALLOWED_SIGNERS" ]] ||
+    fail "allowed signers file ${ALLOWED_SIGNERS} is missing; cannot verify ${tag}"
+  if ! as_service_user git -C "$repo" -c gpg.format=ssh \
+    -c "gpg.ssh.allowedSignersFile=${ALLOWED_SIGNERS}" verify-tag "$tag"; then
+    fail "tag ${tag} failed signature verification"
+  fi
+  info "tag ${tag} signature verified"
+}
+
+# An existing checkout keeps whatever origin it was cloned from. Point it at
+# the URL for this run so a q1 mirror is actually what gets fetched.
+point_origin_at() {
+  local repo="$1" url="$2"
+  if as_service_user git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    as_service_user git -C "$repo" remote set-url origin "$url"
+  else
+    as_service_user git -C "$repo" remote add origin "$url"
+  fi
+}
+
+fetch_tag() {
+  local repo="$1" tag="$2"
+  git_as_service -C "$repo" fetch --quiet origin "refs/tags/${tag}:refs/tags/${tag}"
+}
+
 prepare_checkout() {
   step "Checking out ${TAG} into ${CHECKOUT}"
 
   if [[ ! -d "${CHECKOUT}/.git" ]]; then
     info "no checkout yet, cloning ${REPO_URL}"
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$(dirname "$CHECKOUT")"
-    as_service_user git clone --quiet "$REPO_URL" "$CHECKOUT"
+    git_as_service clone --quiet "$REPO_URL" "$CHECKOUT"
   fi
 
-  as_service_user git -C "$CHECKOUT" fetch --quiet --tags --force origin
-
-  as_service_user git -C "$CHECKOUT" rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null ||
-    fail "tag ${TAG} does not exist on ${REPO_URL}. Push the tag first."
+  point_origin_at "$CHECKOUT" "$REPO_URL"
+  assert_tag_unmoved "$CHECKOUT" "$REPO_URL" "$TAG" >/dev/null
+  fetch_tag "$CHECKOUT" "$TAG"
+  verify_release_tag "$CHECKOUT" "$TAG"
 
   # Detached checkout: the production tree tracks a tag, never a branch.
   as_service_user git -C "$CHECKOUT" checkout --quiet --detach "refs/tags/${TAG}"
@@ -179,60 +363,23 @@ build_backend() {
   [[ -f "${CHECKOUT}/dist/server.js" ]] || fail "build produced no dist/server.js"
 }
 
-install_web_bundle() {
-  # v0.4.0: the operator points HERMES_WEB_BUNDLE at a built apps/web/build
-  # directory (or a .tar.gz of it) and this copies it into HERMES_WEB_DIR.
-  #
-  # v0.5.0 seam: download the matching hermes-fe release asset from GitHub
-  # and retry with backoff (the two repos release independently, so the
-  # asset may still be uploading) instead of requiring HERMES_WEB_BUNDLE
-  # on the operator's command line.
-  step "Installing web bundle"
-
-  local web_dir
-  web_dir="$(env_file_value HERMES_WEB_DIR)"
-  if [[ -z "$web_dir" ]]; then
-    info "HERMES_WEB_DIR is unset in ${ENV_FILE}; skipping web bundle (backend-only deploy)"
-    return 0
-  fi
-
-  if [[ -z "${HERMES_WEB_BUNDLE:-}" ]]; then
-    fail "HERMES_WEB_DIR is set (${web_dir}) but HERMES_WEB_BUNDLE is missing. Point it at the SvelteKit build output (or a .tar.gz of it), e.g. sudo HERMES_WEB_BUNDLE=/path/to/hermes-fe/apps/web/build $0 ${INSTANCE} ${TAG}"
-  fi
-
-  local bundle="$HERMES_WEB_BUNDLE"
-  [[ -e "$bundle" ]] || fail "HERMES_WEB_BUNDLE=${bundle} does not exist"
-
-  # The service may write its data directory; if the bundle lived there, a
-  # compromised process could rewrite the JavaScript every browser loads.
-  local data_dir
-  data_dir="$(instance_data_dir)"
-  case "${web_dir%/}/" in
-    "${data_dir%/}/"*)
-      fail "HERMES_WEB_DIR=${web_dir} is inside the data directory ${data_dir}. Set HERMES_WEB_DIR=/srv/hermes/web/${INSTANCE} in ${ENV_FILE}, deploy again, then remove ${web_dir}."
-      ;;
-  esac
-  [[ ! -L "$web_dir" ]] || fail "HERMES_WEB_DIR=${web_dir} is a symlink; refusing to write through it"
-
-  info "installing ${bundle} into ${web_dir}"
-
-  # Root owns the whole tree, staging included, so nothing the service user
-  # can write is ever on the path root copies into.
-  local parent staging
-  parent="$(dirname "$web_dir")"
-  install -d -o root -g root -m 0755 "$parent"
-  staging="$(mktemp -d "${parent}/.staging.XXXXXX")"
+# Copies a built web tree into a root-only temp directory, rejects symlinks,
+# checks SHA-256, then replaces HERMES_WEB_DIR.
+stage_web_bundle() {
+  local bundle="$1" web_dir="$2"
+  local staging sums link
+  staging="$(mktemp -d /root/hermes-web.XXXXXX)"
+  chmod 0700 "$staging"
 
   if [[ -d "$bundle" ]]; then
-    cp -a "$bundle"/. "$staging"/
+    tar -C "$bundle" -cf - . | tar -C "$staging" -xf -
   elif [[ -f "$bundle" && ( "$bundle" == *.tar.gz || "$bundle" == *.tgz ) ]]; then
     tar -xzf "$bundle" -C "$staging"
   else
     rm -rf "$staging"
-    fail "HERMES_WEB_BUNDLE=${bundle} must be a directory or a .tar.gz"
+    fail "web bundle ${bundle} must be a directory or a .tar.gz"
   fi
 
-  # tar czf web.tar.gz build  wraps index.html in a single top-level directory.
   if [[ ! -f "${staging}/index.html" ]]; then
     local -a kids=()
     local child
@@ -244,11 +391,11 @@ install_web_bundle() {
       info "using nested $(basename "${kids[0]}")/ as the bundle root"
       local inner="${kids[0]}"
       local flat
-      flat="$(mktemp -d "${parent}/.flatten.XXXXXX")"
-      rmdir "$flat"
-      mv "$inner" "$flat"
+      flat="$(mktemp -d /root/hermes-web.XXXXXX)"
+      chmod 0700 "$flat"
+      tar -C "$inner" -cf - . | tar -C "$flat" -xf -
       rm -rf "$staging"
-      mv "$flat" "$staging"
+      staging="$flat"
     fi
   fi
 
@@ -257,14 +404,96 @@ install_web_bundle() {
     fail "web bundle has no index.html; expected a SvelteKit apps/web/build directory"
   fi
 
+  while IFS= read -r link; do
+    rm -rf "$staging"
+    fail "web bundle contains a symlink (${link}); refusing to install it"
+  done < <(find "$staging" -type l)
+
+  sums="$(mktemp /root/hermes-web.XXXXXX.sha256)"
+  (cd "$staging" && find . -type f -print0 | sort -z | xargs -0 sha256sum) >"$sums"
+  if ! (cd "$staging" && sha256sum -c "$sums" >/dev/null); then
+    rm -rf "$staging"
+    rm -f "$sums"
+    fail "web bundle checksum did not match the staged files"
+  fi
+  info "web checksum $(sha256sum "$sums" | awk '{ print $1 }')"
+
+  install -d -o root -g root -m 0755 "$(dirname "$web_dir")"
   install -d -o root -g root -m 0755 "$web_dir"
-  # Replace contents so hashed assets from the previous release do not linger.
   find "$web_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   cp -a --no-preserve=ownership "$staging"/. "$web_dir"/
   chown -R root:root "$web_dir"
   chmod -R u=rwX,go=rX "$web_dir"
   rm -rf "$staging"
+  rm -f "$sums"
   info "web bundle installed at ${web_dir} (root-owned, read-only to ${SERVICE_USER})"
+}
+
+build_fe_bundle() {
+  step "Building hermes-fe ${TAG}"
+
+  if [[ ! -d "${FE_CHECKOUT}/.git" ]]; then
+    info "no hermes-fe checkout yet, cloning ${FE_REPO_URL}"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$(dirname "$FE_CHECKOUT")"
+    git_as_service clone --quiet "$FE_REPO_URL" "$FE_CHECKOUT"
+  fi
+
+  point_origin_at "$FE_CHECKOUT" "$FE_REPO_URL"
+  assert_tag_unmoved "$FE_CHECKOUT" "$FE_REPO_URL" "$TAG" >/dev/null
+  fetch_tag "$FE_CHECKOUT" "$TAG"
+  verify_release_tag "$FE_CHECKOUT" "$TAG"
+  as_service_user git -C "$FE_CHECKOUT" checkout --quiet --detach "refs/tags/${TAG}"
+  as_service_user git -C "$FE_CHECKOUT" clean -qfd
+
+  as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
+    npm --prefix "$FE_CHECKOUT" ci --no-audit --no-fund
+  # dist/ is not in git. The web app imports @hermes/core from that build.
+  as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
+    npm --prefix "$FE_CHECKOUT" run build --workspace @hermes/core
+  [[ -f "${FE_CHECKOUT}/packages/core/dist/index.js" ]] ||
+    fail "hermes-fe build produced no packages/core/dist/index.js"
+  as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
+    npm --prefix "$FE_CHECKOUT" run build --workspace @hermes/web
+  [[ -f "${FE_CHECKOUT}/apps/web/build/index.html" ]] ||
+    fail "hermes-fe build produced no apps/web/build/index.html"
+  FE_BUNDLE_DIR="${FE_CHECKOUT}/apps/web/build"
+}
+
+install_web_bundle() {
+  step "Installing web bundle"
+
+  local web_dir
+  web_dir="$(env_file_value HERMES_WEB_DIR)"
+  if [[ -z "$web_dir" ]]; then
+    info "HERMES_WEB_DIR is unset in ${ENV_FILE}; skipping web bundle (backend-only deploy)"
+    return 0
+  fi
+
+  local data_dir
+  data_dir="$(instance_data_dir)"
+  case "${web_dir%/}/" in
+    "${data_dir%/}/"*)
+      fail "HERMES_WEB_DIR=${web_dir} is inside the data directory ${data_dir}. Set HERMES_WEB_DIR=/srv/hermes/web/${INSTANCE} in ${ENV_FILE}, deploy again, then remove ${web_dir}."
+      ;;
+  esac
+  [[ ! -L "$web_dir" ]] || fail "HERMES_WEB_DIR=${web_dir} is a symlink; refusing to write through it"
+
+  local bundle
+  if [[ -n "${HERMES_WEB_BUNDLE:-}" ]]; then
+    bundle="$HERMES_WEB_BUNDLE"
+    [[ -e "$bundle" ]] || fail "HERMES_WEB_BUNDLE=${bundle} does not exist"
+    [[ ! -L "$bundle" ]] || fail "HERMES_WEB_BUNDLE=${bundle} is a symlink; refusing to follow it"
+    info "installing operator bundle ${bundle}"
+  else
+    FE_BUNDLE_DIR=""
+    build_fe_bundle
+    bundle="$FE_BUNDLE_DIR"
+  fi
+
+  stage_web_bundle "$bundle" "$web_dir"
 }
 
 instance_data_dir() {
@@ -376,7 +605,9 @@ commit_matches() {
 
 main() {
   check_prerequisites
+  write_safe_gitconfig
   prepare_checkout
+  ensure_node
   install_dependencies
   build_backend
   install_web_bundle

@@ -130,8 +130,11 @@ test('v0.10.0 REST: hide, unsend, reset, last_message, colors', async () => {
   assert.equal(again.status, 200);
   assert.equal((again.data as { id: number }).id, messageId);
 
-  const history = (await json('GET', `/messages?room=${encodeURIComponent(dmSlug)}`, undefined, bobToken))
-    .data as Array<{ id: number; content: string; deleted_at?: string | null }>;
+  const history = (
+    (await json('GET', `/messages?room=${encodeURIComponent(dmSlug)}`, undefined, bobToken)).data as {
+      messages: Array<{ id: number; content: string; deleted_at?: string | null }>;
+    }
+  ).messages;
   const kept = history.find((row) => row.id === messageId);
   assert.ok(kept?.deleted_at);
   assert.equal(kept?.content, '');

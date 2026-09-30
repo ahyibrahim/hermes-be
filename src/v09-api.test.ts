@@ -66,7 +66,7 @@ test('v0.9.0 REST: timestamps, leave, unread, colors', async () => {
   assert.match(createdAt, /^\d{4}-\d{2}-\d{2}T.*Z$/);
 
   const history = await json('GET', '/messages?room=general', undefined, aliceToken);
-  const hello = (history.data as Array<{ content: string; created_at: string }>).find(
+  const hello = (history.data as { messages: Array<{ content: string; created_at: string }> }).messages.find(
     (row) => row.content === 'hello-iso'
   );
   assert.equal(hello?.created_at, createdAt);

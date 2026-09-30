@@ -70,7 +70,7 @@ test('an already-populated pre-v0.3.0 database opens cleanly and its users can l
   assert.equal(findSessionUser(session!.token), 'legacy');
   assert.equal(await loginUser('legacy', 'wrong'), null);
 
-  const history = listMessages('general');
+  const history = listMessages('general').messages;
   assert.ok(history.some((row) => row.content === 'history from before the upgrade'));
 
   const fresh = await registerUser('newcomer', 'hunter2');

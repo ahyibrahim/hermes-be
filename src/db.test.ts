@@ -15,7 +15,7 @@ test('uses an environment-configured database path for room messages', async () 
   const { createMessage, listMessages } = await import('./db');
 
   const message = createMessage('general', 'alice', 'hello');
-  const messages = listMessages('general');
+  const messages = listMessages('general').messages;
   const hello = messages.filter((row) => row.sender === 'alice' && row.content === 'hello');
 
   assert.equal(message.content, 'hello');

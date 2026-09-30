@@ -88,7 +88,10 @@ test('v0.14.0 REST: add members, reject general/DM/hermes/unknown, unread starts
 
   const history = await json('GET', `/messages?room=${encodeURIComponent(groupSlug)}`, undefined, caraToken);
   assert.equal(history.status, 200);
-  assert.equal((history.data as Array<{ content: string }>).some((row) => row.content === 'before cara'), true);
+  assert.equal(
+    (history.data as { messages: Array<{ content: string }> }).messages.some((row) => row.content === 'before cara'),
+    true
+  );
 
   const outsider = await json('POST', '/rooms/members', { room: groupSlug, userIds: [bobId] }, bobToken);
   assert.equal(outsider.status, 403);

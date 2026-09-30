@@ -210,7 +210,7 @@ async function connectAuthed(token: string) {
     const history = await fetch(`${origin}/messages?room=general`, {
       headers: { Authorization: `Bearer ${dupes.token}` },
     });
-    const rows = (await history.json()) as Array<{ content: string }>;
+    const rows = ((await history.json()) as { messages: Array<{ content: string }> }).messages;
     assert.equal(rows.filter((row) => row.content === 'once').length, 1);
     dupeConn.socket.close();
 
