@@ -46,6 +46,12 @@ environment:
   HERMES_ALLOWED_SIGNERS  SSH allowed-signers file used to verify tags
                           (default /etc/hermes/allowed_signers). Required for
                           v0.29.0 and newer.
+  HERMES_NODE_BIN         Node binary for install, build, and this instance.
+                          Default: the first of /opt/hermes/node, /usr/local,
+                          /usr that is Node 20.12+ or 22. Older /usr/bin/node
+                          is left in place.
+  HERMES_NODE_PREFIX      Node prefix to copy into /opt/hermes/node when none
+                          of the defaults is new enough.
 USAGE
   exit 2
 }
@@ -102,12 +108,118 @@ as_service_user() {
   fi
 }
 
+# A local mirror is owned by the operator. `git -c safe.directory=...` does
+# not reach the local upload-pack Git 2.43 spawns for ls-remote and fetch, so
+# that process still refuses the directory. A global config file, pointed at
+# by GIT_CONFIG_GLOBAL, is read there.
+SAFE_GITCONFIG=""
+
+write_safe_gitconfig() {
+  local url wrote=0
+  local path="/srv/hermes/${INSTANCE}/safe.directory.gitconfig"
+  install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "/srv/hermes/${INSTANCE}"
+  rm -f "$path"
+  for url in "$REPO_URL" "$FE_REPO_URL"; do
+    [[ "$url" == /* && -d "$url" ]] || continue
+    git config --file "$path" --add safe.directory "$url"
+    wrote=1
+  done
+  if [[ "$wrote" -eq 0 ]]; then
+    SAFE_GITCONFIG=""
+    return 0
+  fi
+  chown "root:${SERVICE_GROUP}" "$path"
+  chmod 0640 "$path"
+  SAFE_GITCONFIG="$path"
+}
+
+git_as_service() {
+  if [[ -n "$SAFE_GITCONFIG" ]]; then
+    as_service_user env GIT_CONFIG_GLOBAL="$SAFE_GITCONFIG" git "$@"
+  else
+    as_service_user git "$@"
+  fi
+}
+
 # npm must run in CHECKOUT. This script is invoked from the operator's working
 # tree (or, later, a runner workspace). The hermes user cannot read /home/ai
 # (mode 750), so a bare `npm ci` there fails with "no package-lock.json" even
 # though the production checkout has one. git already uses -C; npm gets --prefix.
+# Node 18 cannot load the web toolchain (`styleText` from node:util). The
+# service unit hard-codes /usr/bin/node, which on this host is 18. Put a new
+# enough binary on PATH for npm, and point only this instance at it.
+NODE_BIN=""
+
+node_version_ok() {
+  "$1" -e '
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    const ok = major > 21 || (major === 21 && minor >= 7) || (major === 20 && minor >= 12);
+    process.exit(ok ? 0 : 1);
+  ' >/dev/null 2>&1
+}
+
+service_path() {
+  printf '%s' "$(dirname "$NODE_BIN"):/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+}
+
+ensure_node() {
+  local candidate src="" dir
+  if [[ -n "${HERMES_NODE_BIN:-}" ]]; then
+    node_version_ok "$HERMES_NODE_BIN" ||
+      fail "HERMES_NODE_BIN ${HERMES_NODE_BIN} must be Node 20.12+ or 22+"
+    NODE_BIN="$HERMES_NODE_BIN"
+  else
+    for candidate in /opt/hermes/node/bin/node /usr/local/bin/node /usr/bin/node; do
+      [[ -x "$candidate" ]] || continue
+      if node_version_ok "$candidate"; then
+        NODE_BIN="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$NODE_BIN" ]]; then
+    if [[ -n "${HERMES_NODE_PREFIX:-}" && -x "${HERMES_NODE_PREFIX}/bin/node" ]]; then
+      src="$HERMES_NODE_PREFIX"
+    else
+      for dir in /home/ai/.nvm/versions/node/v20.* /home/ai/.nvm/versions/node/v22.*; do
+        [[ -x "$dir/bin/node" ]] || continue
+        if node_version_ok "$dir/bin/node"; then
+          src="$dir"
+          break
+        fi
+      done
+    fi
+    [[ -n "$src" && -d "$src" ]] ||
+      fail "need Node 20.12+ or 22+; /usr/bin/node is $(/usr/bin/node -v 2>/dev/null || echo missing)"
+    step "Installing Node from ${src} to /opt/hermes/node"
+    rm -rf /opt/hermes/node
+    mkdir -p /opt/hermes
+    cp -a "$src" /opt/hermes/node
+    chmod -R a+rX /opt/hermes/node
+    NODE_BIN="/opt/hermes/node/bin/node"
+    node_version_ok "$NODE_BIN" || fail "copied Node at ${NODE_BIN} failed the version check"
+  fi
+
+  info "node $("$NODE_BIN" -v) (${NODE_BIN})"
+
+  # Only the instance being deployed. The shared template still starts
+  # /usr/bin/node, so other instances are unchanged.
+  if [[ "$(readlink -f "$NODE_BIN")" != "$(readlink -f /usr/bin/node)" ]]; then
+    install -d -m 0755 "/etc/systemd/system/${UNIT}.service.d"
+    cat >"/etc/systemd/system/${UNIT}.service.d/node.conf" <<EOF
+[Service]
+ExecStart=
+ExecStart=${NODE_BIN} dist/server.js
+EOF
+    systemctl daemon-reload
+    info "instance ${INSTANCE} starts with ${NODE_BIN}"
+  fi
+}
+
 npm_in_checkout() {
   as_service_user env HOME="$CHECKOUT" npm_config_cache="${CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
     npm --prefix "$CHECKOUT" "$@"
 }
 
@@ -166,7 +278,7 @@ tag_needs_signature() {
 assert_tag_unmoved() {
   local repo="$1" url="$2" tag="$3"
   local remote local_sha
-  remote="$(as_service_user git -C "$repo" ls-remote origin "refs/tags/${tag}")"
+  remote="$(git_as_service -C "$repo" ls-remote origin "refs/tags/${tag}")"
   remote="$(printf '%s\n' "$remote" | awk -v ref="refs/tags/${tag}" '$2 == ref { print $1; exit }')"
   [[ -n "$remote" ]] || fail "tag ${tag} does not exist on ${url}. Push the tag first."
   local_sha="$(as_service_user git -C "$repo" rev-parse --verify --quiet "refs/tags/${tag}" || true)"
@@ -190,9 +302,20 @@ verify_release_tag() {
   info "tag ${tag} signature verified"
 }
 
+# An existing checkout keeps whatever origin it was cloned from. Point it at
+# the URL for this run so a q1 mirror is actually what gets fetched.
+point_origin_at() {
+  local repo="$1" url="$2"
+  if as_service_user git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+    as_service_user git -C "$repo" remote set-url origin "$url"
+  else
+    as_service_user git -C "$repo" remote add origin "$url"
+  fi
+}
+
 fetch_tag() {
   local repo="$1" tag="$2"
-  as_service_user git -C "$repo" fetch --quiet origin "refs/tags/${tag}:refs/tags/${tag}"
+  git_as_service -C "$repo" fetch --quiet origin "refs/tags/${tag}:refs/tags/${tag}"
 }
 
 prepare_checkout() {
@@ -201,9 +324,10 @@ prepare_checkout() {
   if [[ ! -d "${CHECKOUT}/.git" ]]; then
     info "no checkout yet, cloning ${REPO_URL}"
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$(dirname "$CHECKOUT")"
-    as_service_user git clone --quiet "$REPO_URL" "$CHECKOUT"
+    git_as_service clone --quiet "$REPO_URL" "$CHECKOUT"
   fi
 
+  point_origin_at "$CHECKOUT" "$REPO_URL"
   assert_tag_unmoved "$CHECKOUT" "$REPO_URL" "$TAG" >/dev/null
   fetch_tag "$CHECKOUT" "$TAG"
   verify_release_tag "$CHECKOUT" "$TAG"
@@ -311,9 +435,10 @@ build_fe_bundle() {
   if [[ ! -d "${FE_CHECKOUT}/.git" ]]; then
     info "no hermes-fe checkout yet, cloning ${FE_REPO_URL}"
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$(dirname "$FE_CHECKOUT")"
-    as_service_user git clone --quiet "$FE_REPO_URL" "$FE_CHECKOUT"
+    git_as_service clone --quiet "$FE_REPO_URL" "$FE_CHECKOUT"
   fi
 
+  point_origin_at "$FE_CHECKOUT" "$FE_REPO_URL"
   assert_tag_unmoved "$FE_CHECKOUT" "$FE_REPO_URL" "$TAG" >/dev/null
   fetch_tag "$FE_CHECKOUT" "$TAG"
   verify_release_tag "$FE_CHECKOUT" "$TAG"
@@ -321,8 +446,16 @@ build_fe_bundle() {
   as_service_user git -C "$FE_CHECKOUT" clean -qfd
 
   as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
     npm --prefix "$FE_CHECKOUT" ci --no-audit --no-fund
+  # dist/ is not in git. The web app imports @hermes/core from that build.
   as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
+    npm --prefix "$FE_CHECKOUT" run build --workspace @hermes/core
+  [[ -f "${FE_CHECKOUT}/packages/core/dist/index.js" ]] ||
+    fail "hermes-fe build produced no packages/core/dist/index.js"
+  as_service_user env HOME="$FE_CHECKOUT" npm_config_cache="${FE_CHECKOUT}/.npm-cache" \
+    PATH="$(service_path)" \
     npm --prefix "$FE_CHECKOUT" run build --workspace @hermes/web
   [[ -f "${FE_CHECKOUT}/apps/web/build/index.html" ]] ||
     fail "hermes-fe build produced no apps/web/build/index.html"
@@ -472,7 +605,9 @@ commit_matches() {
 
 main() {
   check_prerequisites
+  write_safe_gitconfig
   prepare_checkout
+  ensure_node
   install_dependencies
   build_backend
   install_web_bundle

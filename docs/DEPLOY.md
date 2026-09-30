@@ -212,6 +212,12 @@ not stand up coturn until that test says so.
    (`HERMES_HEALTH_TIMEOUT`). A `q1` rehearsal points `HERMES_REPO_URL` and
    `HERMES_FE_REPO_URL` at local mirrors.
 
+   Builds and the instance process need Node 20.12 or newer (22 also works).
+   If `/usr/bin/node` is older, the script copies a new enough prefix to
+   `/opt/hermes/node` and points only this instance at it. Other instances
+   keep starting `/usr/bin/node`. It builds `@hermes/core` before the web
+   app, because a fresh checkout does not contain that package's `dist`.
+
    If `HERMES_WEB_DIR` is unset, the web step is skipped and a backend-only
    deploy is still valid. `HERMES_WEB_BUNDLE` is an env var to this script,
    not a line in `/etc/hermes/p1.env`.
@@ -499,8 +505,9 @@ starts in 5 minutes, so a service that is down and staying down means
   the `hermes` user. The script stops before restarting the unit.
 - **`tag … moved`.** The name already points at a different object in this
   checkout. Deploy a new tag name instead of moving the old one.
-- **Git cannot find the tag.** The tag is not on `origin`, or you pointed
-  `HERMES_REPO_URL` / `HERMES_FE_REPO_URL` at the wrong remote. `deploy.sh`
+- **Git cannot find the tag.** The tag is not on the remote for this run.
+  `HERMES_REPO_URL` and `HERMES_FE_REPO_URL` are written onto the existing
+  checkout before the fetch, so a previous `origin` is not reused. `deploy.sh`
   does not deploy the local working tree.
 - **`npm ci` / `EUSAGE` / missing `package-lock.json`.** `npm` ran in the
   operator's cwd instead of `/srv/hermes/<instance>/hermes-be`. The `hermes`
