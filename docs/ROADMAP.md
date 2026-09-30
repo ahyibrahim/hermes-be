@@ -1377,9 +1377,9 @@ in CI, checks a release tag before deploying it, and loads room history a
 page at a time. A friend with a long transcript sees older messages as they
 scroll up. The phone transcript is unchanged from v0.27.
 
-Decided 2026-09-30. Local branches `feat/v0.29.0-platform` in both repos,
-from the merged v0.28 line (`hermes-be#128`, `hermes-fe#169`). Nothing is
-pushed until `q1` is tested and approved. `p1` is not restarted for this work.
+Decided 2026-09-30. Tested on `q1` behind Serve (`:4443`) the same day.
+Branches `feat/v0.29.0-platform` in both repos, from the merged v0.28 line
+(`hermes-be#128`, `hermes-fe#169`). Not on `p1` yet.
 
 ### Locked
 
