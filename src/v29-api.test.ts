@@ -74,7 +74,7 @@ test('GET /messages returns the latest page, then the page before it', async () 
       olderBody.messages.map((row) => row.content).slice(1),
       ['m0', 'm1', 'm2', 'm3', 'm4']
     );
-    assert.match(olderBody.messages[0]?.content ?? '', /Hermes v0\.28\.0/);
+    assert.match(olderBody.messages[0]?.content ?? '', /Hermes v\d+\.\d+\.\d+ is on the wire/);
 
     const tooBig = await json('GET', '/messages?room=general&limit=101', undefined, token);
     assert.equal(tooBig.status, 400);
