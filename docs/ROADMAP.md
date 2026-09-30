@@ -46,8 +46,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.25.0 - Maintainability hardening (live on `p1`)
 - [x] v0.26.0 - Safety net and phone rails (live on `p1`)
 - [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
-- [ ] v0.28.0 - Hardening: previews, removal, input
-- [ ] v0.29.0 - Platform and supply chain
+- [x] v0.28.0 - Hardening: previews, removal, input (live on `p1`)
+- [x] v0.29.0 - Platform and supply chain (live on `p1`)
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1377,9 +1377,9 @@ in CI, checks a release tag before deploying it, and loads room history a
 page at a time. A friend with a long transcript sees older messages as they
 scroll up. The phone transcript is unchanged from v0.27.
 
-Decided 2026-09-30. Tested on `q1` behind Serve (`:4443`) the same day.
-Branches `feat/v0.29.0-platform` in both repos, from the merged v0.28 line
-(`hermes-be#128`, `hermes-fe#169`). Not on `p1` yet.
+Decided 2026-09-30. Tested on `q1` behind Serve (`:4443`) the same day, then
+deployed to `p1` (`c531051`). Branches `feat/v0.29.0-platform` in both repos,
+from the merged v0.28 line (`hermes-be#128`, `hermes-fe#169`).
 
 ### Locked
 
