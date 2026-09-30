@@ -12,9 +12,10 @@ There is **no frontend Node process**. `npm run build` in hermes-fe emits static
 files; this process serves them from `HERMES_WEB_DIR`. Root `npm start` in
 hermes-fe is the CLI, not the web UI.
 
-As of v0.4.0 deploying is still a manual, deliberate act: merge the release PRs,
-push a tag on **both** repos, build the hermes-fe SPA, run `setup-host.sh` once
-if the host is not provisioned, then run `deploy.sh`. Automated deploy is
+Deploying is still a manual, deliberate act: merge the release PRs, push a tag
+on **both** repos, run `setup-host.sh` once if the host is not provisioned,
+then run `deploy.sh`. From v0.29.0 the script checks out that same tag of
+hermes-fe and builds the SPA itself. Automated deploy is
 [backlog](#automated-deploy-backlog), blocked on a private hermes-be. See
 [adr/0002-deployment-topology.md](adr/0002-deployment-topology.md). Pushing a
 tag still does not deploy.
@@ -145,29 +146,44 @@ not stand up coturn until that test says so.
 1. **Merge the release PRs, then tag both repos.** Deploys are always by tag,
    never by branch. `deploy.sh` fetches the **hermes-be** tag from GitHub
    (`https://github.com/ahyibrahim/hermes-be.git` unless `HERMES_REPO_URL` is
-   set); it does not use `/home/ai/Workspace/hermes-be`. Tag after merge so the
-   tag matches `main`:
+   set) and the same tag of hermes-fe (`HERMES_FE_REPO_URL`, default
+   `https://github.com/ahyibrahim/hermes-fe.git`). It does not use
+   `/home/ai/Workspace`. Tag after merge so the tag matches `main`.
+
+   From v0.29.0 the tag must be an SSH-signed annotated tag. Older tags stay
+   unsigned and can still be deployed, as long as the name still points at the
+   same commit. A tag that has moved is refused.
 
    ```sh
-   git tag v0.4.0
-   git push origin v0.4.0
+   git -c gpg.format=ssh -c user.signingkey=~/.ssh/id_ed25519.pub \
+     tag -s v0.29.0 -m "v0.29.0"
+   git push origin v0.29.0
    ```
 
    Do this in **hermes-be and hermes-fe**. Pushing a tag does not deploy
-   anything, in this release or later ones.
+   anything.
 
-2. **Build the web UI** in a hermes-fe checkout (SvelteKit `adapter-static`).
-   The artifact is `apps/web/build`. There is nothing to `npm start` on the
-   frontend:
+   Once, on the host, put the public key where deploy can read it (mode
+   `0640`, group `hermes`):
 
-   ```sh
-   cd /home/ai/Workspace/hermes-fe
-   npm run build
+   ```
+   /etc/hermes/allowed_signers
    ```
 
-   That directory (or a `.tar.gz` of it) is what `deploy.sh` unpacks into
-   `HERMES_WEB_DIR`. Skip this step only for a backend-only instance, where
-   `HERMES_WEB_DIR` is unset in `/etc/hermes/<instance>.env`.
+   One line, `namespaces="git"`, then the public key:
+
+   ```
+   you@host namespaces="git" ssh-ed25519 AAAA...
+   ```
+
+   `HERMES_ALLOWED_SIGNERS` overrides that path. The identity on the left is
+   the one Git records on the signature (usually `user.email`).
+
+2. **The web UI is built by deploy.** `deploy.sh` checks out the same tag of
+   hermes-fe and runs the SvelteKit build. Set `HERMES_WEB_BUNDLE` only when
+   you want to install an existing `apps/web/build` directory (or a `.tar.gz`
+   of it) instead. Skip the web step entirely when `HERMES_WEB_DIR` is unset
+   (backend-only).
 
 3. **On the host.** `ying-1` is this machine; skip SSH if you are already there.
    From another device:
@@ -176,28 +192,29 @@ not stand up coturn until that test says so.
    ssh ying-1
    ```
 
-4. **Run the deploy.** When `HERMES_WEB_DIR` is set (the default in
-   `deploy/hermes.env.example`), pass the bundle path. `HERMES_WEB_BUNDLE` is an
-   env var to this script, not a line in `/etc/hermes/p1.env`:
+4. **Run the deploy.**
 
    ```sh
    cd /home/ai/Workspace/hermes-be
-   sudo HERMES_WEB_BUNDLE=/home/ai/Workspace/hermes-fe/apps/web/build \
-     ./scripts/deploy.sh p1 v0.4.0
+   sudo ./scripts/deploy.sh p1 v0.29.0
    ```
 
-   The script checks the tag out into `/srv/hermes/p1/hermes-be` as the `hermes`
-   user, runs `npm ci` and `npm run build`, replaces the contents of
-   `HERMES_WEB_DIR` with the bundle (so stale hashed assets from the previous
-   release do not linger), writes the deployed commit into `/etc/hermes/p1.env`
-   as `HERMES_GIT_COMMIT`, restarts `hermes-be@p1`, and then polls `/health`
-   until it reports the version and commit that were just deployed. It exits
-   non-zero with the `journalctl` command to run if it does not see them within
-   90 seconds (`HERMES_HEALTH_TIMEOUT`).
+   The script checks the tag (and, unless `HERMES_WEB_BUNDLE` is set, the
+   matching hermes-fe tag) out under `/srv/hermes/p1/` as the `hermes` user.
+   For v0.29.0 and newer it verifies the SSH signature and refuses a tag whose
+   object changed. It runs `npm ci` and `npm run build`, SHA-256-checks the
+   web build in a root-only temp directory, then replaces `HERMES_WEB_DIR`
+   (so stale hashed assets from the previous release do not linger). It writes
+   the deployed commit into `/etc/hermes/p1.env` as `HERMES_GIT_COMMIT`,
+   restarts `hermes-be@p1`, and polls `/health` until it reports the version
+   and commit that were just deployed. It exits non-zero with the `journalctl`
+   command to run if it does not see them within 90 seconds
+   (`HERMES_HEALTH_TIMEOUT`). A `q1` rehearsal points `HERMES_REPO_URL` and
+   `HERMES_FE_REPO_URL` at local mirrors.
 
-   If `HERMES_WEB_DIR` is set but `HERMES_WEB_BUNDLE` is missing, the script
-   fails before restarting anything. If `HERMES_WEB_DIR` is unset, the web step
-   is skipped and a backend-only deploy is still valid.
+   If `HERMES_WEB_DIR` is unset, the web step is skipped and a backend-only
+   deploy is still valid. `HERMES_WEB_BUNDLE` is an env var to this script,
+   not a line in `/etc/hermes/p1.env`.
 
 5. **Confirm.**
 
@@ -418,7 +435,7 @@ template, carrying `p1`'s values.
 | `HERMES_SESSION_TTL_DAYS` | `30` | Login token lifetime in days. Values that are not a positive number fall back to the default. |
 | `LOG_LEVEL` | `info` | Pino level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `silent`. JSON to stdout. |
 | `HERMES_GIT_COMMIT` | unset | Commit reported by `/health`. `deploy.sh` rewrites this on every deploy; no need to set it by hand. Unset means `/health` asks git, then reports `unknown`. |
-| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle, served from this same process. Unset is a no-op (backend-only). `p1` uses `/srv/hermes/web/p1`, root-owned; `deploy.sh` refuses a path inside the data directory. When this is set, `deploy.sh` requires `HERMES_WEB_BUNDLE`. |
+| `HERMES_WEB_DIR` | unset | Directory of the SvelteKit static bundle, served from this same process. Unset is a no-op (backend-only). `p1` uses `/srv/hermes/web/p1`, root-owned; `deploy.sh` refuses a path inside the data directory. When this is set, `deploy.sh` builds hermes-fe at the same tag unless `HERMES_WEB_BUNDLE` is passed. |
 
 Note that `HERMES_SESSION_TTL_DAYS` is now the real logout interval. Before
 v0.3.0 tokens lived in an in-memory `Map`, so every restart signed everyone out;
@@ -427,10 +444,11 @@ sessions are rows in SQLite now and survive restarts.
 The systemd `EnvironmentFile` format is not shell: no `export`, no command
 substitution, and quotes are only needed for values containing spaces.
 
-`HERMES_WEB_BUNDLE` is **not** in the env file. It is an argument to
-`scripts/deploy.sh`: the path to a built `apps/web/build` directory, or a
-`.tar.gz` of it. Automated download from a hermes-fe GitHub Release is backlog
-(blocked on a private hermes-be); until then, pass the path by hand.
+`HERMES_WEB_BUNDLE` is **not** in the env file. It is an optional override for
+`scripts/deploy.sh`: a built `apps/web/build` directory, or a `.tar.gz` of it.
+Without it, deploy builds that directory from the hermes-fe tag. Automated
+download from a hermes-fe GitHub Release is still backlog (blocked on a private
+hermes-be).
 
 ## Service status and logs
 
@@ -475,13 +493,15 @@ starts in 5 minutes, so a service that is down and staying down means
 
 - **`DEPLOY FAILED: /etc/hermes/p1.env does not exist`.** Host setup has not
   been run. `sudo ./scripts/setup-host.sh p1`, then retry the deploy.
-- **`HERMES_WEB_DIR is set … but HERMES_WEB_BUNDLE is missing`.** Pass
-  `HERMES_WEB_BUNDLE` on the `deploy.sh` command, pointing at
-  `hermes-fe/apps/web/build` (or a `.tar.gz` of it). The script stops before
-  restarting the unit.
+- **`allowed signers file … is missing` or `failed signature verification`.**
+  Tags from v0.29.0 up are SSH-signed. The public key must be in
+  `/etc/hermes/allowed_signers` (or `HERMES_ALLOWED_SIGNERS`), readable by
+  the `hermes` user. The script stops before restarting the unit.
+- **`tag … moved`.** The name already points at a different object in this
+  checkout. Deploy a new tag name instead of moving the old one.
 - **Git cannot find the tag.** The tag is not on `origin`, or you pointed
-  `HERMES_REPO_URL` at the wrong remote. `deploy.sh` does not deploy the local
-  working tree.
+  `HERMES_REPO_URL` / `HERMES_FE_REPO_URL` at the wrong remote. `deploy.sh`
+  does not deploy the local working tree.
 - **`npm ci` / `EUSAGE` / missing `package-lock.json`.** `npm` ran in the
   operator's cwd instead of `/srv/hermes/<instance>/hermes-be`. The `hermes`
   user cannot read `/home/ai` (mode 750), so it looks like there is no lockfile

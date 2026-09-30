@@ -2,6 +2,9 @@
   "name": "hermes-be",
   "version": "0.28.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
@@ -12,13 +15,13 @@
   "//test": "npm test runs only self-contained node:test files under src/. It boots what it needs and uses temporary databases. LOG_LEVEL=silent keeps Pino off so the TAP output stays readable; logger.test.ts overrides the level when it captures logs.",
   "//test:integration": "Runs src/v06-api.test.ts (also part of npm test). The old live-server script is a historical note in test/integration/integration.spec.ts.",
   "dependencies": {
-    "@fastify/multipart": "^8.3.1",
-    "@fastify/rate-limit": "^9.1.0",
-    "@fastify/static": "^7.0.4",
-    "@fastify/websocket": "^10.0.0",
+    "@fastify/multipart": "^10.1.2",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^10.1.5",
+    "@fastify/websocket": "^11.3.1",
     "argon2": "^0.45.1",
     "better-sqlite3": "^11.0.0",
-    "fastify": "^4.25.2",
+    "fastify": "^5.12.5",
     "htmlparser2": "^9.1.0",
     "ipaddr.js": "^2.5.0",
     "pino": "^9.14.0",

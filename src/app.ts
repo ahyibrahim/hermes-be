@@ -120,7 +120,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     trustProxy: ['127.0.0.1', '::1'],
     genReqId: () => crypto.randomUUID(),
     requestIdHeader: 'x-request-id',
-    requestIdLogLabel: 'reqId',
   });
 
   const filesDir = process.env.HERMES_FILES_DIR

@@ -149,7 +149,7 @@ test('POST /messages takes the sender from the session and rejects a bare body.s
     const history = await fetch(`${instance.origin}/messages?room=general`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const rows = (await history.json()) as Array<{ sender: string; content: string }>;
+    const rows = ((await history.json()) as { messages: Array<{ sender: string; content: string }> }).messages;
     assert.equal(rows.some((row) => row.content === 'no token here'), false);
     assert.equal(rows.some((row) => row.sender === 'legacy-cli'), false);
   } finally {

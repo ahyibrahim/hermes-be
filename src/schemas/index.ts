@@ -78,6 +78,8 @@ export const roomSlugParamSchema = z.object({
 
 export const listMessagesQuerySchema = z.object({
   room: z.string().optional(),
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 export const createMessageSchema = z.object({

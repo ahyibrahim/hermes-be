@@ -172,11 +172,13 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
     assert.deepEqual(daveAware.users, ['bob']);
     d.socket.close();
 
-    const history = (await (
-      await fetch(`${origin}/messages?room=general`, {
-        headers: { Authorization: `Bearer ${bob.token}` },
-      })
-    ).json()) as Array<{ sender: string; content: string }>;
+    const history = (
+      (await (
+        await fetch(`${origin}/messages?room=general`, {
+          headers: { Authorization: `Bearer ${bob.token}` },
+        })
+      ).json()) as { messages: Array<{ sender: string; content: string }> }
+    ).messages;
     const startLines = history.filter(
       (row) => row.sender === 'hermes' && row.content.includes('started watching together')
     );
@@ -206,11 +208,13 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
       'carol must not get a second start announcement'
     );
 
-    const history2 = (await (
-      await fetch(`${origin}/messages?room=general`, {
-        headers: { Authorization: `Bearer ${bob.token}` },
-      })
-    ).json()) as Array<{ sender: string; content: string }>;
+    const history2 = (
+      (await (
+        await fetch(`${origin}/messages?room=general`, {
+          headers: { Authorization: `Bearer ${bob.token}` },
+        })
+      ).json()) as { messages: Array<{ sender: string; content: string }> }
+    ).messages;
     assert.equal(
       history2.filter((row) => row.sender === 'hermes' && row.content.includes('started watching together'))
         .length,

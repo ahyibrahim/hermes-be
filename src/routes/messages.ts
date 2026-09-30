@@ -21,7 +21,12 @@ import {
 } from '../schemas';
 
 export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
-  fastify.get('/messages', async (request: FastifyRequest<{ Querystring: { room?: string } }>, reply) => {
+  fastify.get(
+    '/messages',
+    async (
+      request: FastifyRequest<{ Querystring: { room?: string; before?: string; limit?: string } }>,
+      reply
+    ) => {
     const parsed = listMessagesQuerySchema.safeParse(request.query);
     if (!parsed.success) {
       reply.code(400);
@@ -49,7 +54,7 @@ export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext)
       markRoomRead(me.id, slug);
     }
 
-    return listMessages(slug);
+    return listMessages(slug, parsed.data.before, parsed.data.limit);
   });
 
   fastify.post('/messages', async (request, reply) => {

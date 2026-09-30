@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.28.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.29.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -47,6 +47,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.26.0 - Safety net and phone rails (live on `p1`)
 - [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
 - [ ] v0.28.0 - Hardening: previews, removal, input
+- [ ] v0.29.0 - Platform and supply chain
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1368,6 +1369,48 @@ now loaded through Hermes. The phone transcript is unchanged from v0.27.
 - Not in scope: Fastify 5 and signed deploys (v0.29.0); session hashing,
   roles, add-member consent and user-list scoping (v0.30.0). Announcement in
   `docs/announcements/v0.28.0.md`.
+
+## v0.29.0 - Platform and supply chain
+
+Third hardening release. Moves the server to Fastify 5, checks dependencies
+in CI, checks a release tag before deploying it, and loads room history a
+page at a time. A friend with a long transcript sees older messages as they
+scroll up. The phone transcript is unchanged from v0.27.
+
+Decided 2026-09-30. Local branches `feat/v0.29.0-platform` in both repos,
+from the merged v0.28 line (`hermes-be#128`, `hermes-fe#169`). Nothing is
+pushed until `q1` is tested and approved. `p1` is not restarted for this work.
+
+### Locked
+
+- **Fastify 5.** hermes-be and its Fastify plugins run on Fastify 5. CI tests
+  Node 20. Node 18 leaves the matrix.
+- **Dependency check.** Both repositories run `npm audit --audit-level=high`
+  in CI and fail on a high or critical finding. That check reports findings
+  in the web toolchain, so the web app moves to SvelteKit 2.70.3, Svelte
+  5.57.1, Vite 8.3.1 and Vitest 3.2.7, and pins `cookie` at 0.7.2. Moderate
+  findings that remain do not fail the job.
+- **Signed tags.** From v0.29.0 upward, including release candidates,
+  `deploy.sh` verifies an SSH-signed tag and refuses a tag whose object
+  changed. Older unsigned tags still deploy when the name still points at
+  the same commit, so a rollback to v0.28.0 keeps working. The host trusts
+  an allowed-signers file. Commits, pull requests and CI stay unsigned.
+- **Web bundle.** Deploy checks out the same tag of hermes-fe
+  (`HERMES_FE_REPO_URL`, a local mirror for `q1`), verifies it the same way,
+  and builds the web app from that checkout. The built files are SHA-256
+  checked and staged in a root-only temp directory before they replace
+  `HERMES_WEB_DIR`. Setting `HERMES_WEB_BUNDLE` skips the hermes-fe build and
+  installs that tree instead, still through the staging directory and the
+  checksum.
+- **History.** `GET /messages` returns the latest 100 messages as
+  `{ messages, has_more }`, oldest first inside the page. `before` is the
+  oldest id already loaded and returns the previous page. The web transcript
+  loads older messages when scrolled to the top. The CLI can request the
+  next older page with `/older`.
+- **Phone transcript.** Unchanged from v0.27.
+- Tested on `q1` behind Serve (`:4443`) before `p1`.
+- Not in scope: session hashing, roles, add-member consent and user-list
+  scoping (v0.30.0). Announcement in `docs/announcements/v0.29.0.md`.
 
 ## Backlog (unscheduled)
 

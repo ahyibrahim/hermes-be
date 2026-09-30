@@ -86,7 +86,7 @@ test('v0.11.0 REST: system hermes, no-login, one announcement', async () => {
     assert.equal(again, false);
 
     const history = await json('GET', '/messages?room=general', undefined, aliceToken);
-    const messages = history.data as Array<{ sender: string; content: string }>;
+    const messages = (history.data as { messages: Array<{ sender: string; content: string }> }).messages;
     const eleven = messages.filter(
       (message) => message.sender === 'hermes' && /v0\.11\.0/.test(message.content)
     );
