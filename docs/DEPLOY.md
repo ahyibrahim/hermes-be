@@ -425,6 +425,36 @@ WHERE username = '…';`. Then `DELETE FROM sessions WHERE username = '…';`
 and `DELETE FROM password_reset_tokens WHERE username = '…';`. Do not type a
 GitHub password into git, and do not log a reset token.
 
+## Appoint a master
+
+Each instance has one master. Registration does not create one. The command
+opens that instance's database, so run it from the instance checkout with the
+Node the instance uses. The service account cannot read `/home/ai`.
+
+Promote an existing account:
+
+```sh
+sudo -u hermes \
+  HERMES_DB_PATH=/var/lib/hermes/p1/hermes.db \
+  /opt/hermes/node/bin/node /srv/hermes/p1/hermes-be/dist/bootstrap-master.js alice
+```
+
+Create the account when it is not there yet. The password is read from the
+environment, not from the argument list:
+
+```sh
+sudo -u hermes \
+  HERMES_DB_PATH=/var/lib/hermes/p1/hermes.db \
+  HERMES_BOOTSTRAP_PASSWORD='choose-a-password' \
+  /opt/hermes/node/bin/node /srv/hermes/p1/hermes-be/dist/bootstrap-master.js alice
+```
+
+If a master already exists, that person becomes an admin and the named user
+becomes the master. The master is a member of `#general`. The API cannot
+appoint, demote, or reset the master. Use a throwaway `HERMES_DB_PATH` when
+trying this against a checkout; do not point it at a live database until you
+mean to.
+
 ## Environment variables
 
 All of these are read from `/etc/hermes/<instance>.env` by the systemd unit

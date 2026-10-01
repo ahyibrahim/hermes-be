@@ -52,6 +52,8 @@ test('v0.14.0 REST: add members, reject general/DM/hermes/unknown, unread starts
   await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
   const bobReg = await json('POST', '/auth/register', { username: 'bob', password: 'secret2' });
   const caraReg = await json('POST', '/auth/register', { username: 'cara', password: 'secret3' });
+  const { seatInGeneral } = await import('./test-seat');
+  seatInGeneral('alice', 'bob', 'cara');
   const bobId = (bobReg.data as { user: { id: number } }).user.id;
   const caraId = (caraReg.data as { user: { id: number } }).user.id;
 
@@ -143,6 +145,8 @@ test('v0.14.0 WS: member_added fans out to invitees on create and add-later', as
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password: 'hunter2' }),
     });
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

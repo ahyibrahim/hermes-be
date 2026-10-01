@@ -45,6 +45,8 @@ test('a login token still authenticates after the server restarts', async () => 
     body: JSON.stringify({ username: 'persist', password: 'hunter2' }),
   });
   assert.equal(register.status, 200);
+  const { seatInGeneral } = await import('./test-seat');
+  seatInGeneral('persist');
 
   const login = await fetch(`${first.origin}/auth/login`, {
     method: 'POST',
@@ -122,6 +124,8 @@ test('POST /messages takes the sender from the session and rejects a bare body.s
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: 'poster', password: 'hunter2' }),
     });
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral('poster');
     const login = await fetch(`${instance.origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

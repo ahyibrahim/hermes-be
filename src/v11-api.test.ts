@@ -46,7 +46,9 @@ test('v0.11.0 REST: system hermes, no-login, one announcement', async () => {
     const aliceReg = await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
     assert.equal(aliceReg.status, 200);
     const alice = (aliceReg.data as { user: { id: number; role: string } }).user;
-    assert.equal(alice.role, 'admin');
+    assert.equal(alice.role, 'member');
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral('alice');
 
     const hermesLogin = await json('POST', '/auth/login', { username: 'hermes', password: 'secret1' });
     assert.equal(hermesLogin.status, 401);

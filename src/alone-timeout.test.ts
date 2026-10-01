@@ -53,6 +53,8 @@ test('alone timeouts: call leaves after short timeout; watch ends after short ti
       ).status,
       200
     );
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

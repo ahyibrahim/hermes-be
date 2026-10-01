@@ -9,6 +9,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "bootstrap-master": "node dist/bootstrap-master.js",
     "test": "LOG_LEVEL=silent tsx --test src/*.test.ts",
     "test:integration": "LOG_LEVEL=silent tsx --test src/v06-api.test.ts src/v07-api.test.ts src/v09-api.test.ts src/v10-api.test.ts src/v11-api.test.ts src/v14-api.test.ts"
   },

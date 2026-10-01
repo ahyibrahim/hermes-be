@@ -34,6 +34,8 @@ test('websocket upgrade and frame limits', async () => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'limits', password: 'hunter2' }),
   });
+  const { seatInGeneral } = await import('./test-seat');
+  seatInGeneral('limits');
   const login = await fetch(`${origin}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

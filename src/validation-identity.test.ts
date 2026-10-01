@@ -25,6 +25,8 @@ test('input validation (Zod) and server-side author binding', async () => {
       body: JSON.stringify({ username, password }),
     });
     assert.equal(reg.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
 
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',

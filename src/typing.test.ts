@@ -48,6 +48,8 @@ test('typing: fan-out excluding sender, stop, TTL, and disconnect clear', async 
       ).status,
       200
     );
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

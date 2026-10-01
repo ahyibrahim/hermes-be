@@ -60,9 +60,13 @@ test('v0.10.0 REST: hide, unsend, reset, last_message, colors', async () => {
   const aliceReg = await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
   const bobReg = await json('POST', '/auth/register', { username: 'bob', password: 'secret2' });
   await json('POST', '/auth/register', { username: 'cara', password: 'secret3' });
+  const { appointMaster } = await import('./auth');
+  const { seatInGeneral } = await import('./test-seat');
+  appointMaster('alice');
+  seatInGeneral('alice', 'bob', 'cara');
   const aliceUser = (aliceReg.data as { user: { id: number; color: string; role: string } }).user;
   const bobUser = (bobReg.data as { user: { id: number; color: string } }).user;
-  assert.equal(aliceUser.role, 'admin');
+  assert.equal(aliceUser.role, 'member');
   assert.notEqual(aliceUser.color, bobUser.color);
 
   const aliceToken = ((await json('POST', '/auth/login', { username: 'alice', password: 'secret1' })).data as {
@@ -116,7 +120,7 @@ test('v0.10.0 REST: hide, unsend, reset, last_message, colors', async () => {
   const messageId = (posted.data as { id: number }).id;
 
   const bobUnsend = await json('DELETE', `/messages/${messageId}`, undefined, bobToken);
-  assert.equal(bobUnsend.status, 403);
+  assert.equal(bobUnsend.status, 404);
 
   const unsended = await json('DELETE', `/messages/${messageId}`, undefined, aliceToken);
   assert.equal(unsended.status, 200);
@@ -208,7 +212,7 @@ test('v0.10.0 REST: hide, unsend, reset, last_message, colors', async () => {
   assert.equal(newMe.status, 200);
 
   const selfIssue = await json('POST', '/users/alice/password-reset', {}, aliceToken);
-  assert.equal(selfIssue.status, 201);
+  assert.equal(selfIssue.status, 403);
 
   const clash = await json('PATCH', '/users/me', { color: aliceUser.color }, newSession.token);
   assert.equal(clash.status, 409);
@@ -233,6 +237,8 @@ test('v0.10.0 WS: hidden members still get messages; unsend and user_updated fan
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password: 'hunter2' }),
     });
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

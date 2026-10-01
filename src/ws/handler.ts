@@ -2,7 +2,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { isRoomMember } from '../db';
 import { getUserByUsername, markRoomRead } from '../rooms';
 import { can } from '../authz';
-import { findSessionUser } from '../sessions';
+import { findSession, hashSessionToken, sessionIsLive } from '../sessions';
 import { normalizeYouTubeUrl, parseYouTubeVideoId } from '../youtube';
 import {
   errorFrame,
@@ -30,8 +30,12 @@ import { wsFrameSchema, type LooseWsFrame } from './frames';
 export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
   const lastPong = new WeakMap<object, number>();
 
-  function attachUserSocket(user: string, socket: TrackedSocket['socket']): TrackedSocket {
-    const entry: TrackedSocket = { socket, user };
+  function attachUserSocket(
+    user: string,
+    socket: TrackedSocket['socket'],
+    sessionHash?: string
+  ): TrackedSocket {
+    const entry: TrackedSocket = { socket, user, sessionHash };
     if (!ctx.userSockets.has(user)) {
       ctx.userSockets.set(user, new Set());
     }
@@ -93,15 +97,22 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
 
         const token = extractBearer(request) ?? (request.query as { token?: string }).token;
         if (typeof token === 'string' && token.trim()) {
-          const username = findSessionUser(token);
-          if (!username) {
+          const session = findSession(token);
+          if (!session) {
             request.log.info(
               { event: 'ws_unauthorized', reason: 'invalid_token' },
               'websocket handshake rejected'
             );
             return reply.code(401).send({ error: 'authentication required' });
           }
-          (request as FastifyRequest & { username: string }).username = username;
+          const authed = request as FastifyRequest & {
+            username?: string;
+            sessionHash?: string;
+            sessionScope?: string;
+          };
+          authed.username = session.username;
+          authed.sessionHash = hashSessionToken(token.trim());
+          authed.sessionScope = session.scope;
           return;
         }
 
@@ -117,14 +128,21 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
     (connection: unknown, request: FastifyRequest) => {
       const socket = unwrapSocket(connection);
       let room: string | null = null;
-      let user = (request as FastifyRequest & { username?: string }).username ?? '';
+      const authed = request as FastifyRequest & {
+        username?: string;
+        sessionHash?: string;
+        sessionScope?: 'member' | 'guest';
+      };
+      let user = authed.username ?? '';
+      const sessionHash = authed.sessionHash;
+      const sessionScope = authed.sessionScope ?? 'member';
       let client: RoomSocket | null = null;
       let userEntry: TrackedSocket | null = null;
       const budget = createMessageBudget();
 
       lastPong.set(socket, Date.now());
       if (user) {
-        userEntry = attachUserSocket(user, socket);
+        userEntry = attachUserSocket(user, socket, sessionHash);
         request.log.info({ event: 'ws_connect', user }, 'websocket connected');
       }
 
@@ -143,12 +161,15 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
         ctx.broadcastToRoom(leftRoom, { type: 'user_left', room: leftRoom, user: leftUser });
       };
 
-      const bindUser = (username: string) => {
+      const bindUser = (username: string, hash?: string) => {
         user = username;
         if (!userEntry) {
-          userEntry = attachUserSocket(user, socket);
+          userEntry = attachUserSocket(user, socket, hash);
         } else {
           userEntry.user = user;
+          if (hash) {
+            userEntry.sessionHash = hash;
+          }
         }
       };
 
@@ -193,6 +214,15 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
       });
 
       socket.on('message', (raw: Buffer | string) => {
+        if (userEntry?.sessionHash && !sessionIsLive(userEntry.sessionHash)) {
+          try {
+            socket.close?.(1000, 'session ended');
+          } catch {
+            // already closed
+          }
+          return;
+        }
+
         if (!budget.take()) {
           request.log.warn({ event: 'ws_rate_limited', user }, 'websocket message rate exceeded');
           try {
@@ -214,13 +244,13 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
           if (payload.type === 'join_room') {
             if (!user) {
               const joinToken = typeof payload.token === 'string' ? payload.token.trim() : '';
-              const username = joinToken ? findSessionUser(joinToken) : null;
-              if (!username) {
+              const joined = joinToken ? findSession(joinToken) : null;
+              if (!joined) {
                 sendJson(socket, errorFrame('authentication required'));
                 socket.close?.();
                 return;
               }
-              bindUser(username);
+              bindUser(joined.username, hashSessionToken(joinToken));
               sendJson(socket, { type: 'connected', user });
               request.log.info({ event: 'ws_connect', user }, 'websocket connected');
             }
@@ -481,6 +511,12 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
               return;
             }
 
+            const starter = getUserByUsername(user);
+            if (!starter || !can({ ...starter, scope: sessionScope }, 'watch.start')) {
+              sendJson(socket, errorFrame('not allowed'));
+              return;
+            }
+
             const url = normalizeYouTubeUrl(videoId);
             const now = Date.now();
             const session: WatchSession = {
@@ -602,7 +638,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
                   ? 'watch.end'
                   : 'watch.seek';
 
-            if (!can(actor, authzAction, { isWatchHost })) {
+            if (!can({ ...actor, scope: sessionScope }, authzAction, { isWatchHost })) {
               ctx.sendToUser(user, { type: 'watch_control_denied', room: slug, action });
               return;
             }
@@ -729,6 +765,14 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
 
     for (const sockets of ctx.userSockets.values()) {
       for (const entry of [...sockets]) {
+        if (entry.sessionHash && !sessionIsLive(entry.sessionHash)) {
+          try {
+            entry.socket.close?.(1000, 'session ended');
+          } catch {
+            // already closed
+          }
+          continue;
+        }
         pingOne(entry.socket, () => {
           try {
             entry.socket.terminate?.();

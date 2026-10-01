@@ -141,13 +141,16 @@ export function unsendMessage(
   id: number,
   username: string,
   options: { asAdmin?: boolean } = {}
-): { message: MessageRecord } | { error: 'not_found' | 'forbidden' } {
+): { message: MessageRecord } | { error: 'not_found' } {
   const existing = getMessageById(id);
   if (!existing) {
     return { error: 'not_found' };
   }
+  if (!isNamedRoomMember(existing.room, username)) {
+    return { error: 'not_found' };
+  }
   if (existing.sender !== username && !options.asAdmin) {
-    return { error: 'forbidden' };
+    return { error: 'not_found' };
   }
   if (existing.deleted_at) {
     return { message: toTombstone(existing, existing.deleted_at) };

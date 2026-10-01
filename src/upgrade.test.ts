@@ -129,3 +129,38 @@ test('migrating twice is a no-op', () => {
   assert.equal(seed.count, 1);
   db.close();
 });
+
+test('plaintext session tokens are hashed in place and still resolve', () => {
+  const dbPath = path.join(tempDir, 'sessions-hash.db');
+  const db = new Database(dbPath);
+  migrateSchema(db);
+  db.exec('DROP TABLE sessions');
+  db.exec(`CREATE TABLE sessions (
+      token TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )`);
+  const token = 'legacy-session-token';
+  const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+  db.prepare('INSERT INTO sessions (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)').run(
+    token,
+    'legacy',
+    new Date().toISOString(),
+    expiresAt
+  );
+  migrateSchema(db);
+
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>).map((column) => column.name)
+  );
+  assert.equal(columns.has('token'), false);
+  assert.equal(columns.has('token_hash'), true);
+  const row = db.prepare('SELECT username, scope FROM sessions WHERE token_hash = ?').get(sha256(token)) as {
+    username: string;
+    scope: string;
+  };
+  assert.equal(row.username, 'legacy');
+  assert.equal(row.scope, 'member');
+  db.close();
+});

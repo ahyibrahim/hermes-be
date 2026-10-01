@@ -66,9 +66,8 @@ test('v0.6.0 REST: users, rooms, DMs, logout', async () => {
   const directory = users.data as Array<{ username: string; system?: boolean }>;
   assert.deepEqual(
     directory.map((row) => row.username).sort(),
-    ['alice', 'bob', 'hermes']
+    ['alice']
   );
-  assert.equal(directory.find((row) => row.username === 'hermes')?.system, true);
 
   const online = await json('GET', '/users/online', undefined, aliceToken);
   assert.equal(online.status, 200);
@@ -76,7 +75,7 @@ test('v0.6.0 REST: users, rooms, DMs, logout', async () => {
   const rooms = await json('GET', '/rooms', undefined, aliceToken);
   assert.equal(rooms.status, 200);
   const aliceRooms = rooms.data as { slug: string; type: string }[];
-  assert.ok(aliceRooms.some((room) => room.slug === 'general' && room.type === 'group'));
+  assert.equal(aliceRooms.some((room) => room.slug === 'general'), false);
 
   const group = await json('POST', '/rooms', { name: 'Test Group', members: [bobId] }, aliceToken);
   assert.equal(group.status, 200);
@@ -96,14 +95,17 @@ test('v0.6.0 REST: users, rooms, DMs, logout', async () => {
   const postMsg = await json(
     'POST',
     '/messages',
-    { room: 'general', content: 'hello from REST' },
+    { room: groupSlug, content: 'hello from REST' },
     aliceToken
   );
   assert.equal(postMsg.status, 200);
   assert.equal((postMsg.data as { sender: string }).sender, 'alice');
 
-  const emptyMsg = await json('POST', '/messages', { room: 'general', content: '   ' }, aliceToken);
+  const emptyMsg = await json('POST', '/messages', { room: groupSlug, content: '   ' }, aliceToken);
   assert.equal(emptyMsg.status, 400);
+
+  const outside = await json('POST', '/messages', { room: 'general', content: 'hello from REST' }, aliceToken);
+  assert.equal(outside.status, 403);
 
   const loginBob = await json('POST', '/auth/login', { username: 'bob', password: 'secret2' });
   const bobToken = (loginBob.data as { token: string }).token;
