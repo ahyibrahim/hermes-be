@@ -216,7 +216,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
       socket.on('message', (raw: Buffer | string) => {
         if (userEntry?.sessionHash && !sessionIsLive(userEntry.sessionHash)) {
           try {
-            socket.close?.(1000, 'session ended');
+            socket.close?.(4001, 'session ended');
           } catch {
             // already closed
           }
@@ -767,7 +767,7 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
       for (const entry of [...sockets]) {
         if (entry.sessionHash && !sessionIsLive(entry.sessionHash)) {
           try {
-            entry.socket.close?.(1000, 'session ended');
+            entry.socket.close?.(4001, 'session ended');
           } catch {
             // already closed
           }

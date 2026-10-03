@@ -169,7 +169,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
         continue;
       }
       try {
-        entry.socket.close?.(1000, 'session ended');
+        // 4001 is an application close: the client must not reconnect with this token.
+        entry.socket.close?.(4001, 'session ended');
       } catch {
         // already closed
       }
