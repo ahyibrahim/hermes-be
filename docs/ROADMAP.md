@@ -1495,18 +1495,22 @@ current `main` (`hermes-be` `8b17f3f`, `hermes-fe` `49d5502`).
   used and when it expires. The default is one use and 24 hours. The token is
   stored as a hash. The link keeps it in the URL fragment, and Join sends it.
   The plaintext token is shown once.
-- **Join.** The guest chooses a name in the usual username shape. It cannot
-  match an existing account. Join creates a guest with no password and a
-  session of 12 hours, then a waiting room with no messages and no member
-  list. Admins and members cannot invite or admit.
+- **Join.** The guest chooses a display name in the usual username shape.
+  It cannot match a member's name, or the display name of a guest who is
+  still here. The account is `guest_1`, `guest_2`, and so on. The room
+  shows the display name. The account name is on the hover card. Every
+  guest uses the same grey, which members cannot pick. Join creates a
+  guest with no password and a session of 12 hours, then a waiting room
+  with no messages and no member list. Admins and members cannot invite
+  or admit.
 - **Admission.** The master admits them into the rooms on that invite. They
   see messages from that moment on. The people list shows them as a guest.
   They can read and send in those rooms, including uploads. They cannot
   start a DM, add anyone, call, or host Watch together.
 - **Removal.** The master can remove a guest, and a guest session also ends
   at 12 hours. Either way the live connection closes, their uploads are
-  deleted, and their messages stay in the room. The name stays on those
-  messages, so it is not offered again.
+  deleted, and their messages stay in the room under that account. The
+  display name can be chosen again.
 - **Call setup.** On the tailnet app, `/ice` keeps returning the public STUN
   servers. When a TURN server is configured (`HERMES_TURN_URLS` and
   `HERMES_TURN_SECRET`), each member also receives a credential that expires

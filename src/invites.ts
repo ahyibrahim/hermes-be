@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { hashPassword } from './auth';
-import { USER_COLOR_PALETTE } from './colors';
+import { GUEST_COLOR } from './colors';
 import { getDb } from './database';
 import { guestStatus, type GuestStatus } from './guests';
 import { getRoomBySlug, getUserByUsername } from './rooms';
@@ -27,6 +27,7 @@ export type InviteSummary = {
 
 export type GuestSummary = {
   username: string;
+  displayName: string;
   status: GuestStatus;
   rooms: string[];
   createdAt: string;
@@ -34,20 +35,6 @@ export type GuestSummary = {
 
 function hashInviteToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
-}
-
-function nextColor(): string {
-  const taken = new Set(
-    (
-      getDb()
-        .prepare("SELECT color FROM users WHERE color IS NOT NULL AND color != ''")
-        .all() as Array<{ color: string }>
-    ).map((row) => row.color)
-  );
-  return (
-    USER_COLOR_PALETTE.find((slot) => !taken.has(slot)) ??
-    USER_COLOR_PALETTE[taken.size % USER_COLOR_PALETTE.length]
-  );
 }
 
 function roomsForInvite(inviteId: number): string[] {
@@ -188,41 +175,79 @@ export function revokeInvite(id: number): boolean {
 export function listOpenGuests(): GuestSummary[] {
   const rows = getDb()
     .prepare(
-      `SELECT id, username, guest_status, created_at
+      `SELECT id, username, display_name, guest_status, created_at
        FROM users
        WHERE role = 'guest' AND guest_status IN ('waiting', 'admitted')
        ORDER BY id ASC`
     )
-    .all() as Array<{ id: number; username: string; guest_status: GuestStatus; created_at: string }>;
+    .all() as Array<{
+    id: number;
+    username: string;
+    display_name: string | null;
+    guest_status: GuestStatus;
+    created_at: string;
+  }>;
   return rows.map((row) => ({
     username: row.username,
+    displayName: row.display_name || row.username,
     status: row.guest_status,
     rooms: roomsForGuest(row.id),
     createdAt: row.created_at,
   }));
 }
 
+function nextGuestUsername(): string {
+  const rows = getDb().prepare("SELECT username FROM users WHERE username LIKE 'guest_%'").all() as Array<{
+    username: string;
+  }>;
+  let max = 0;
+  for (const row of rows) {
+    const match = /^guest_(\d+)$/.exec(row.username);
+    if (match) {
+      max = Math.max(max, Number(match[1]));
+    }
+  }
+  let n = max + 1;
+  while (getUserByUsername(`guest_${n}`)) {
+    n += 1;
+  }
+  return `guest_${n}`;
+}
+
+function displayNameTaken(name: string): boolean {
+  if (getUserByUsername(name)) {
+    return true;
+  }
+  const active = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM users
+       WHERE role = 'guest' AND guest_status IN ('waiting', 'admitted') AND display_name = ?`
+    )
+    .get(name) as { ok: number } | undefined;
+  return Boolean(active);
+}
+
 export async function redeemInvite(
   token: string,
   username: string,
   now = Date.now()
-): Promise<{ error: string; status: 400 | 409 } | { userId: number; session: SessionRecord }> {
-  const normalized = username.trim().toLowerCase();
-  if (!isUsername(normalized) || isSystemUsername(normalized)) {
-    return { error: 'username must be 2-24 characters: a-z, 0-9, underscore', status: 400 };
+): Promise<{ error: string; status: 400 | 409 } | { userId: number; session: SessionRecord; displayName: string }> {
+  const displayName = username.trim().toLowerCase();
+  if (!isUsername(displayName) || isSystemUsername(displayName)) {
+    return { error: 'name must be 2-24 characters: a-z, 0-9, underscore', status: 400 };
   }
-  if (getUserByUsername(normalized)) {
+  if (displayNameTaken(displayName)) {
     return { error: 'that name is not available', status: 409 };
   }
 
   const hashed = await hashPassword(crypto.randomBytes(32).toString('base64url'));
-  const color = nextColor();
   const tokenHash = hashInviteToken(token.trim());
   const db = getDb();
 
   let userId = 0;
+  let account = '';
   try {
-    const redeem = db.transaction((): { error: string } | { userId: number } => {
+    const redeem = db.transaction((): { error: string } | { userId: number; account: string } => {
       const invite = db
         .prepare(
           `SELECT id, max_uses, use_count, expires_at, revoked_at
@@ -248,25 +273,30 @@ export async function redeemInvite(
         return { error: 'invite is not valid' as const };
       }
 
+      if (displayNameTaken(displayName)) {
+        return { error: 'that name is not available' as const };
+      }
+
       const slugs = roomsForInvite(invite.id);
+      const accountName = nextGuestUsername();
       let result;
       try {
         result = db
           .prepare(
-            `INSERT INTO users (username, password, role, color, guest_status)
-             VALUES (?, ?, 'guest', ?, 'waiting')`
+            `INSERT INTO users (username, password, role, color, guest_status, display_name)
+             VALUES (?, ?, 'guest', ?, 'waiting', ?)`
           )
-          .run(normalized, hashed, color);
+          .run(accountName, hashed, GUEST_COLOR, displayName);
       } catch (error) {
         const message = String((error as Error).message);
         if (message.includes('UNIQUE') && (message.includes('idx_users_color') || message.includes('users.color'))) {
           db.exec('DROP INDEX IF EXISTS idx_users_color');
           result = db
             .prepare(
-              `INSERT INTO users (username, password, role, color, guest_status)
-               VALUES (?, ?, 'guest', ?, 'waiting')`
+              `INSERT INTO users (username, password, role, color, guest_status, display_name)
+               VALUES (?, ?, 'guest', ?, 'waiting', ?)`
             )
-            .run(normalized, hashed, color);
+            .run(accountName, hashed, GUEST_COLOR, displayName);
         } else if (message.includes('UNIQUE')) {
           return { error: 'that name is not available' as const };
         } else {
@@ -280,13 +310,14 @@ export async function redeemInvite(
         link.run(id, slug);
       }
       db.prepare('UPDATE invites SET use_count = use_count + 1 WHERE id = ?').run(invite.id);
-      return { userId: id };
+      return { userId: id, account: accountName };
     });
     const outcome = redeem();
     if ('error' in outcome) {
       return { error: outcome.error, status: outcome.error === 'invite is not valid' ? 400 : 409 };
     }
     userId = outcome.userId;
+    account = outcome.account;
   } catch (error) {
     const message = String((error as Error).message);
     if (message.includes('UNIQUE')) {
@@ -295,8 +326,8 @@ export async function redeemInvite(
     throw error;
   }
 
-  const session = createSession(normalized, now, 'guest', GUEST_SESSION_TTL_MS);
-  return { userId, session };
+  const session = createSession(account, now, 'guest', GUEST_SESSION_TTL_MS);
+  return { userId, session, displayName };
 }
 
 export function admitGuest(username: string): { error: string; status: 400 | 404 } | { rooms: string[] } {

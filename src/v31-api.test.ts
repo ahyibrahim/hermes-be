@@ -110,6 +110,12 @@ test('v0.31.0: gateway invites, waiting room, and per-user TURN credentials', as
 
     const joined = await json(guestOrigin, 'POST', '/join', { token, username: 'sam' });
     assert.equal(joined.status, 200);
+    assert.equal((joined.data as { user: { username: string; displayName: string } }).user.username, 'guest_1');
+    assert.equal((joined.data as { user: { username: string; displayName: string } }).user.displayName, 'sam');
+    const guestRow = getDb()
+      .prepare('SELECT color FROM users WHERE username = ?')
+      .get('guest_1') as { color: string };
+    assert.equal(guestRow.color, 'ash');
     assert.ok(joined.setCookie?.includes('HttpOnly'));
     assert.ok(joined.setCookie?.includes('Secure'));
     const cookie = joined.setCookie!.split(';')[0];
@@ -131,10 +137,12 @@ test('v0.31.0: gateway invites, waiting room, and per-user TURN credentials', as
 
     const taken = await json(origin, 'POST', '/invites', { rooms: [slug] }, masterToken);
     const second = (taken.data as { token: string }).token;
+    const memberName = await json(guestOrigin, 'POST', '/join', { token: second, username: 'alice' });
+    assert.equal(memberName.status, 409);
     const collision = await json(guestOrigin, 'POST', '/join', { token: second, username: 'sam' });
     assert.equal(collision.status, 409);
 
-    const admitted = await json(origin, 'POST', '/guests/sam/admit', {}, masterToken);
+    const admitted = await json(origin, 'POST', '/guests/guest_1/admit', {}, masterToken);
     assert.equal(admitted.status, 200);
     const history = await json(guestOrigin, 'GET', `/messages?room=${encodeURIComponent(slug)}`, undefined, undefined, cookie);
     assert.equal(history.status, 200);
@@ -160,7 +168,7 @@ test('v0.31.0: gateway invites, waiting room, and per-user TURN credentials', as
     const fileRow = getDb().prepare('SELECT path FROM files WHERE id = ?').get(uploadedBody.file.id) as { path: string };
     assert.equal(fs.existsSync(fileRow.path), true);
 
-    const removed = await json(origin, 'POST', '/guests/sam/remove', {}, masterToken);
+    const removed = await json(origin, 'POST', '/guests/guest_1/remove', {}, masterToken);
     assert.equal(removed.status, 200);
     assert.equal(fs.existsSync(fileRow.path), false);
     const kept = await json(origin, 'GET', `/messages?room=${encodeURIComponent(slug)}`, undefined, masterToken);
@@ -177,6 +185,11 @@ test('v0.31.0: gateway invites, waiting room, and per-user TURN credentials', as
 
     const after = await json(guestOrigin, 'GET', '/me', undefined, undefined, cookie);
     assert.equal(after.status, 401);
+
+    const reused = await json(guestOrigin, 'POST', '/join', { token: second, username: 'sam' });
+    assert.equal(reused.status, 200);
+    assert.equal((reused.data as { user: { username: string; displayName: string } }).user.username, 'guest_2');
+    assert.equal((reused.data as { user: { displayName: string } }).user.displayName, 'sam');
 
     process.env.HERMES_ICE_SERVERS = JSON.stringify([
       { urls: 'stun:stun.example:19302', username: 'shared', credential: 'static-secret' },

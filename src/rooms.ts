@@ -31,6 +31,7 @@ export interface PublicUser {
   avatar_file_id: number | null;
   color: string | null;
   system: boolean;
+  display_name: string | null;
 }
 
 function membersOf(roomId: number): string[] {
@@ -60,9 +61,10 @@ type UserRow = {
   avatar_file_id: number | null;
   color: string | null;
   system: number | boolean | null;
+  display_name: string | null;
 };
 
-const USER_COLUMNS = 'id, username, role, avatar_file_id, color, system';
+const USER_COLUMNS = 'id, username, role, avatar_file_id, color, system, display_name';
 
 function mapPublicUser(row: UserRow | undefined): PublicUser | undefined {
   if (!row) {
@@ -75,6 +77,7 @@ function mapPublicUser(row: UserRow | undefined): PublicUser | undefined {
     avatar_file_id: row.avatar_file_id,
     color: row.color,
     system: Number(row.system) === 1 || row.system === true,
+    display_name: row.display_name,
   };
 }
 

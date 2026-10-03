@@ -138,7 +138,7 @@ export async function createGateway(
     const parsed = joinSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: 'username and token are required' };
+      return { error: 'name and token are required' };
     }
     const result = await redeemInvite(parsed.data.token, parsed.data.username);
     if ('error' in result) {
@@ -149,6 +149,7 @@ export async function createGateway(
     return {
       user: {
         username: result.session.username,
+        displayName: result.displayName,
         role: 'guest',
         status: 'waiting',
       },
@@ -164,6 +165,7 @@ export async function createGateway(
     return {
       user: {
         username: guest.username,
+        displayName: profile?.display_name || guest.username,
         role: 'guest',
         status: guest.status,
         color: profile?.color ?? null,
@@ -198,7 +200,14 @@ export async function createGateway(
       reply.code(403);
       return { error: 'not a member of this room' };
     }
-    return listMessages(slug, parsed.data.before, parsed.data.limit, historyAfterId(slug, guest.username));
+    const page = listMessages(slug, parsed.data.before, parsed.data.limit, historyAfterId(slug, guest.username));
+    return {
+      ...page,
+      messages: page.messages.map((message) => ({
+        ...message,
+        sender_name: getUserByUsername(message.sender)?.display_name || message.sender,
+      })),
+    };
   });
 
   gateway.post('/messages', async (request, reply) => {

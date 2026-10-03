@@ -805,6 +805,7 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   postReleaseAnnouncement(db, log);
   migrateDmSlugs(db, log);
   addColumnIfMissing(db, log, 'users', 'guest_status', 'TEXT');
+  addColumnIfMissing(db, log, 'users', 'display_name', 'TEXT');
   addColumnIfMissing(db, log, 'room_members', 'history_after_id', 'INTEGER');
   ensureTable(
     db,
