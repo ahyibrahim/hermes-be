@@ -4,13 +4,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import {
-  addUserToGeneralRoom,
   getUserById,
   getUserByUsername,
-  listUsers,
+  listVisibleUsers,
   setUserColor,
   setUserRole,
   takenColors,
+  usersWhoCanSee,
 } from '../rooms';
 import {
   changePassword,
@@ -23,7 +23,7 @@ import {
 } from '../auth';
 import { can } from '../authz';
 import { isUserColor } from '../colors';
-import { deleteOtherSessions, deleteSession } from '../sessions';
+import { deleteOtherSessions, deleteSession, hashSessionToken } from '../sessions';
 import { createFileRecord, deleteOrphanFile, getFileRecord } from '../db';
 import { sniffInlineImageFile, UPLOAD_RESPONSE_HEADERS } from '../file-type';
 import {
@@ -32,6 +32,7 @@ import {
   AVATAR_TYPES,
   extractToken,
   parseIceServers,
+  resolveSession,
   resolveUser,
   RouteContext,
 } from './common';
@@ -47,6 +48,12 @@ import {
 } from '../schemas';
 
 export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
+  function fanOutProfile(username: string, profile: unknown): void {
+    for (const name of usersWhoCanSee(username)) {
+      ctx.sendToUser(name, { type: 'user_updated', user: profile });
+    }
+  }
+
   fastify.post(
     '/auth/register',
     { config: { rateLimit: authRateLimitConfig() } },
@@ -60,7 +67,6 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       const { username, password } = parsed.data;
       try {
         const user = await registerUser(username, password);
-        addUserToGeneralRoom(user.id);
         return { user: { id: user.id, username: user.username, role: user.role, color: user.color } };
       } catch (error) {
         const message = (error as Error).message;
@@ -121,6 +127,7 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         return { error: 'invalid reset token' };
       }
 
+      ctx.closeUserSockets(session.username);
       request.log.info({ event: 'password_reset_success', username: session.username }, 'password reset redeemed');
       return session;
     }
@@ -132,7 +139,9 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'authentication required' };
     }
 
-    deleteSession(extractToken(request));
+    const token = extractToken(request);
+    deleteSession(token);
+    ctx.closeUserSockets(username, { onlyHash: token ? hashSessionToken(token) : undefined });
     request.log.info({ event: 'logout', username }, 'logged out');
     return { ok: true };
   });
@@ -143,7 +152,12 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'authentication required' };
     }
 
-    return listUsers();
+    const actor = getUserByUsername(username);
+    if (!actor) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+    return listVisibleUsers(actor);
   });
 
   fastify.get('/users/online', async (request, reply) => {
@@ -152,7 +166,13 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'authentication required' };
     }
 
-    return ctx.onlineUsernames();
+    const actor = getUserByUsername(username);
+    if (!actor) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+    const visible = new Set(listVisibleUsers(actor).map((user) => user.username));
+    return ctx.onlineUsernames().filter((name) => visible.has(name));
   });
 
   fastify.get('/ice', async (request, reply) => {
@@ -218,9 +238,7 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       }
       const profile = getProfile(username);
       if (profile) {
-        for (const name of ctx.onlineUsernames()) {
-          ctx.sendToUser(name, { type: 'user_updated', user: profile });
-        }
+        fanOutProfile(username, profile);
       }
       return profile;
     }
@@ -241,7 +259,9 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: (error as Error).message };
     }
 
-    deleteOtherSessions(username, extractToken(request));
+    const token = extractToken(request);
+    deleteOtherSessions(username, token);
+    ctx.closeUserSockets(username, { exceptHash: token ? hashSessionToken(token) : undefined });
     request.log.info({ event: 'password_change', username }, 'password changed');
     return { ok: true };
   });
@@ -326,7 +346,11 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
 
     const id = parsed.data.id;
     const user = getUserById(id);
-    if (!user?.avatar_file_id) {
+    if (!user || !usersWhoCanSee(user.username).includes(username)) {
+      reply.code(404);
+      return { error: 'avatar not found' };
+    }
+    if (!user.avatar_file_id) {
       reply.code(404);
       return { error: 'avatar not found' };
     }
@@ -365,9 +389,19 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
 
       const targetUsername = parsed.data.username;
       const actor = getUserByUsername(actorName);
-      if (!actor || !can(actor, 'user.password_reset')) {
+      const session = resolveSession(request, reply);
+      if (!actor || !session) {
+        reply.code(401);
+        return { error: 'authentication required' };
+      }
+      const target = getUserByUsername(targetUsername);
+      if (!target || target.system) {
+        reply.code(404);
+        return { error: 'user not found' };
+      }
+      if (!can({ ...actor, scope: session.scope }, 'user.password_reset', { target })) {
         reply.code(403);
-        return { error: 'admin required' };
+        return { error: 'forbidden' };
       }
 
       const issued = issuePasswordReset(targetUsername);
@@ -400,9 +434,10 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       }
 
       const actor = getUserByUsername(actorName);
-      if (!actor || !can(actor, 'role.set')) {
-        reply.code(403);
-        return { error: 'admin required' };
+      const session = resolveSession(request, reply);
+      if (!actor || !session) {
+        reply.code(401);
+        return { error: 'authentication required' };
       }
 
       const parsedBody = userRoleBodySchema.safeParse(request.body);
@@ -411,7 +446,28 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         return { error: formatZodError(parsedBody.error) };
       }
 
-      const result = setUserRole(parsedParams.data.username, parsedBody.data.role);
+      const target = getUserByUsername(parsedParams.data.username);
+      if (!target) {
+        reply.code(404);
+        return { error: 'user not found' };
+      }
+      if (target.system) {
+        reply.code(400);
+        return { error: 'cannot change a system user role' };
+      }
+      if (
+        !can({ ...actor, scope: session.scope }, 'role.set', {
+          target,
+          nextRole: parsedBody.data.role,
+        })
+      ) {
+        reply.code(403);
+        return { error: 'forbidden' };
+      }
+
+      const result = setUserRole(parsedParams.data.username, parsedBody.data.role, {
+        allowLastAdmin: actor.role === 'master',
+      });
       if ('error' in result) {
         if (result.error === 'not_found') {
           reply.code(404);
@@ -421,13 +477,15 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
           reply.code(400);
           return { error: 'cannot change a system user role' };
         }
+        if (result.error === 'forbidden') {
+          reply.code(403);
+          return { error: 'forbidden' };
+        }
         reply.code(400);
         return { error: 'cannot demote the last admin' };
       }
 
-      for (const name of ctx.onlineUsernames()) {
-        ctx.sendToUser(name, { type: 'user_updated', user: result });
-      }
+      fanOutProfile(result.username, result);
       request.log.info(
         { event: 'role_set', actor: actorName, username: result.username, role: result.role },
         'user role updated'

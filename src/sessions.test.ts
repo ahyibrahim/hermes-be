@@ -29,7 +29,7 @@ test('session ttl defaults to 30 days and is configurable', async () => {
 });
 
 test('a session is written to sqlite and survives reopening the file', async () => {
-  const { createSession, findSessionUser } = await import('./sessions');
+  const { createSession, findSessionUser, hashSessionToken } = await import('./sessions');
   const { closeDb } = await import('./database');
 
   const session = createSession('alice');
@@ -39,11 +39,14 @@ test('a session is written to sqlite and survives reopening the file', async () 
   closeDb();
 
   const independent = new Database(dbPath, { readonly: true });
-  const row = independent.prepare('SELECT username FROM sessions WHERE token = ?').get(session.token) as
-    | { username: string }
-    | undefined;
+  const columns = independent.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+  assert.equal(columns.some((column) => column.name === 'token'), false);
+  const row = independent
+    .prepare('SELECT username, scope FROM sessions WHERE token_hash = ?')
+    .get(hashSessionToken(session.token)) as { username: string; scope: string } | undefined;
   independent.close();
   assert.equal(row?.username, 'alice');
+  assert.equal(row?.scope, 'member');
 
   // Reopens the file through the shared handle, the way a restart does.
   assert.equal(findSessionUser(session.token), 'alice');

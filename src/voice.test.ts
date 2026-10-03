@@ -62,6 +62,8 @@ test('voice signaling: ICE auth, offer reaches only the target, disconnect clear
       body: JSON.stringify({ username, password }),
     });
     assert.equal(register.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
 
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
@@ -272,6 +274,8 @@ test('screen share: one slot, no spoof, leave clears, room members stay dark', a
       body: JSON.stringify({ username, password }),
     });
     assert.equal(register.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
 
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',

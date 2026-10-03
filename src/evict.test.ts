@@ -51,6 +51,8 @@ test('leaving or being kicked drops call, share, watch and room sockets', async 
   async function register(username: string) {
     const res = await json('POST', '/auth/register', { username, password: 'hunter2' });
     assert.equal(res.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await json('POST', '/auth/login', { username, password: 'hunter2' });
     assert.equal(login.status, 200);
     return login.data as { token: string; id?: number };
@@ -115,6 +117,8 @@ test('leaving or being kicked drops call, share, watch and room sockets', async 
     const alice = await register('alice');
     const bob = await register('bob');
     const carol = await register('carol');
+    const { appointMaster } = await import('./auth');
+    appointMaster('alice');
     const users = (await json('GET', '/users', undefined, alice.token)).data as Array<{
       id: number;
       username: string;
@@ -123,7 +127,7 @@ test('leaving or being kicked drops call, share, watch and room sockets', async 
     const bobId = users.find((user) => user.username === 'bob')!.id;
     const carolId = users.find((user) => user.username === 'carol')!.id;
     const aliceId = users.find((user) => user.username === 'alice')!.id;
-    assert.equal(users.find((user) => user.username === 'alice')?.role, 'admin');
+    assert.equal(users.find((user) => user.username === 'alice')?.role, 'master');
 
     const created = await json('POST', '/rooms', { name: 'party', members: [carolId] }, bob.token);
     assert.equal(created.status, 200);

@@ -37,6 +37,8 @@ test('GET /messages returns the latest page, then the page before it', async () 
   try {
     const registered = await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
     assert.equal(registered.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral('alice');
     const loggedIn = await json('POST', '/auth/login', { username: 'alice', password: 'secret1' });
     assert.equal(loggedIn.status, 200);
     const token = (loggedIn.data as { token: string }).token;

@@ -1,16 +1,17 @@
-import type { UserRole } from './auth';
+import type { SessionScope } from './sessions';
+import { outranks, roleAtLeast, type UserRole } from './roles';
 
 /**
- * Single authorization helper for moderation (v0.19) and reserved watch
- * actions (v0.20). Endpoints call `can()` instead of ad-hoc role checks.
- *
- * Watch actions default to admin until a session host exists; v0.20 will
- * pass `isWatchHost` so the host shares control without inventing new roles.
+ * Single authorization helper. Endpoints call `can()` instead of ad-hoc role
+ * checks. Rank is master, admin, member, guest. A guest session scope fails
+ * closed on every action, including when the account itself outranks guest.
  */
 export type AuthzAction =
   | 'role.set'
   | 'room.kick'
   | 'room.delete'
+  | 'room.add_member'
+  | 'dm.create'
   | 'message.admin_delete'
   | 'user.password_reset'
   | 'watch.start'
@@ -22,6 +23,8 @@ export type AuthzActor = {
   id: number;
   role: UserRole;
   system?: boolean;
+  /** Omitted means a member-scoped session. */
+  scope?: SessionScope;
 };
 
 export type AuthzRoom = {
@@ -34,22 +37,49 @@ export type AuthzContext = {
   room?: AuthzRoom;
   /** Whether the actor is currently a member of `room`. */
   actorIsMember?: boolean;
-  /** The user a kick would remove. */
+  /** The user a kick, reset, or role change would affect. */
   target?: AuthzActor;
-  /** True when the actor hosts the active watch session (v0.20). */
+  /** Role `role.set` would write. Only `member` and `admin` are writable. */
+  nextRole?: 'member' | 'admin';
+  /** True when the actor hosts the active watch session. */
   isWatchHost?: boolean;
 };
 
 export function can(actor: AuthzActor, action: AuthzAction, context: AuthzContext = {}): boolean {
-  if (actor.system) {
+  if (actor.system || actor.scope === 'guest') {
     return false;
   }
 
   switch (action) {
-    case 'role.set':
+    case 'room.add_member':
+    case 'dm.create':
+      return roleAtLeast(actor.role, 'member');
+
+    case 'role.set': {
+      if (!roleAtLeast(actor.role, 'admin') || !context.target || context.target.system) {
+        return false;
+      }
+      if (context.target.role === 'master' || !outranks(actor.role, context.target.role)) {
+        return false;
+      }
+      if (!context.nextRole) {
+        return true;
+      }
+      return outranks(actor.role, context.nextRole);
+    }
+
+    case 'user.password_reset': {
+      if (!roleAtLeast(actor.role, 'admin') || !context.target || context.target.system) {
+        return false;
+      }
+      if (context.target.role === 'master') {
+        return false;
+      }
+      return outranks(actor.role, context.target.role);
+    }
+
     case 'message.admin_delete':
-    case 'user.password_reset':
-      return actor.role === 'admin';
+      return roleAtLeast(actor.role, 'admin');
 
     case 'room.kick':
     case 'room.delete': {
@@ -57,21 +87,32 @@ export function can(actor: AuthzActor, action: AuthzAction, context: AuthzContex
       if (!room || room.type !== 'group' || room.slug === 'general') {
         return false;
       }
-      if (actor.role === 'admin') {
+      if (action === 'room.kick' && context.target?.role === 'master') {
+        return false;
+      }
+      if (roleAtLeast(actor.role, 'admin')) {
         return true;
       }
-      // A creator moderates only while still in the room, and never admins.
+      // A creator moderates only while still in the room, and never admins or master.
       if (room.creator_id == null || room.creator_id !== actor.id || context.actorIsMember !== true) {
         return false;
       }
-      return action === 'room.delete' || context.target?.role !== 'admin';
+      if (action === 'room.delete') {
+        return true;
+      }
+      return !roleAtLeast(context.target?.role, 'admin');
     }
 
     case 'watch.start':
+      return roleAtLeast(actor.role, 'member');
+
     case 'watch.play_pause':
     case 'watch.seek':
     case 'watch.end':
-      return actor.role === 'admin' || Boolean(context.isWatchHost);
+      if (!roleAtLeast(actor.role, 'member')) {
+        return false;
+      }
+      return roleAtLeast(actor.role, 'admin') || Boolean(context.isWatchHost);
 
     default:
       return false;

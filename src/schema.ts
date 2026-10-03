@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { USER_COLOR_PALETTE } from './colors';
@@ -392,6 +393,55 @@ function backfillGeneralMembership(db: SqliteDb, log: SchemaLogger): void {
   );
 }
 
+function migrateHashedSessions(db: SqliteDb, log: SchemaLogger): void {
+  const cols = columnNames(db, 'sessions');
+  if (!tableExists(db, 'sessions') || !cols.has('token')) {
+    if (cols.has('token_hash') && !cols.has('scope')) {
+      db.exec("ALTER TABLE sessions ADD COLUMN scope TEXT NOT NULL DEFAULT 'member'");
+      note(log, true, 'add_column', { table: 'sessions', column: 'scope' }, 'added sessions.scope');
+    } else {
+      note(log, false, 'rebuild_table', { table: 'sessions' }, 'sessions already store token hashes');
+    }
+    return;
+  }
+
+  const rows = db
+    .prepare('SELECT token, username, created_at, expires_at FROM sessions')
+    .all() as Array<{ token: string; username: string; created_at: string; expires_at: string }>;
+  db.exec(`CREATE TABLE sessions_migrated (
+      token_hash TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'member',
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )`);
+  const insert = db.prepare(
+    `INSERT INTO sessions_migrated (token_hash, username, scope, created_at, expires_at)
+     VALUES (?, ?, 'member', ?, ?)`
+  );
+  const copy = db.transaction(() => {
+    for (const row of rows) {
+      insert.run(
+        crypto.createHash('sha256').update(row.token).digest('hex'),
+        row.username,
+        row.created_at,
+        row.expires_at
+      );
+    }
+  });
+  copy();
+  db.exec('DROP TABLE sessions');
+  db.exec('ALTER TABLE sessions_migrated RENAME TO sessions');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at)');
+  note(
+    log,
+    true,
+    'rebuild_table',
+    { table: 'sessions', rows: rows.length },
+    `hashed ${rows.length} session token(s)`
+  );
+}
+
 const projectRoot = path.resolve(__dirname, '..');
 
 function resolveFilesDir(): string {
@@ -567,8 +617,9 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
     log,
     'sessions',
     `CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
+      token_hash TEXT PRIMARY KEY,
       username TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'member',
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     )`
@@ -695,7 +746,20 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
 
   migrateRoomMembers(db, log);
   addColumnIfMissing(db, log, 'room_members', 'hidden_at', 'TEXT');
-  backfillGeneralMembership(db, log);
+  const sessionCols = columnNames(db, 'sessions');
+  const legacySessionTokens = sessionCols.has('token') && !sessionCols.has('token_hash');
+  if (legacySessionTokens) {
+    backfillGeneralMembership(db, log);
+  } else {
+    note(
+      log,
+      false,
+      'backfill',
+      { table: 'room_members', room: 'general' },
+      'general membership is not backfilled'
+    );
+  }
+  migrateHashedSessions(db, log);
   backfillRoomCreators(db, log);
 
   ensureTable(

@@ -153,6 +153,30 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     return [...userSockets.keys()].sort((a, b) => a.localeCompare(b));
   }
 
+  function closeUserSockets(
+    username: string,
+    filter?: { onlyHash?: string; exceptHash?: string }
+  ): void {
+    const sockets = userSockets.get(username);
+    if (!sockets) {
+      return;
+    }
+    for (const entry of [...sockets]) {
+      if (filter?.onlyHash && entry.sessionHash !== filter.onlyHash) {
+        continue;
+      }
+      if (filter?.exceptHash && entry.sessionHash === filter.exceptHash) {
+        continue;
+      }
+      try {
+        // 4001 is an application close: the client must not reconnect with this token.
+        entry.socket.close?.(4001, 'session ended');
+      } catch {
+        // already closed
+      }
+    }
+  }
+
   function sendToUser(username: string, payload: unknown): void {
     const sockets = userSockets.get(username);
     if (!sockets) {
@@ -296,6 +320,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
     teardownRoom,
     connectedUsers,
     onlineUsernames,
+    closeUserSockets,
     touchTyping: callState.touchTyping,
     stopTyping: callState.stopTyping,
     clearTypingForUser: callState.clearTypingForUser,

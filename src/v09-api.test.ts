@@ -47,6 +47,8 @@ test('v0.9.0 REST: timestamps, leave, unread, colors', async () => {
 
   const aliceReg = await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
   const bobReg = await json('POST', '/auth/register', { username: 'bob', password: 'secret2' });
+  const { seatInGeneral } = await import('./test-seat');
+  seatInGeneral('alice', 'bob');
   const alice = (aliceReg.data as { user: { id: number; color: string } }).user;
   const bob = (bobReg.data as { user: { id: number; color: string } }).user;
   assert.ok(alice.color);
@@ -130,6 +132,8 @@ test('v0.9.0 WS: member fan-out and call_started', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password: 'hunter2' }),
     });
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.29.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.30.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -48,6 +48,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
 - [x] v0.28.0 - Hardening: previews, removal, input (live on `p1`)
 - [x] v0.29.0 - Platform and supply chain (live on `p1`)
+- [x] v0.30.0 - Sessions, roles, and scoping
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1411,6 +1412,62 @@ from the merged v0.28 line (`hermes-be#128`, `hermes-fe#169`).
 - Tested on `q1` behind Serve (`:4443`) before `p1`.
 - Not in scope: session hashing, roles, add-member consent and user-list
   scoping (v0.30.0). Announcement in `docs/announcements/v0.29.0.md`.
+
+## v0.30.0 - Sessions, roles, and scoping
+
+Fourth hardening release. Session tokens are stored as hashes, with a scope on
+each session. Roles are ranked, and one master account is appointed from the
+host. People see the accounts they share a room with; admins and the master
+see every account. A new registration is a member and does not join
+`#general`. Watch together still follows the host, without loading the
+YouTube player script into the Hermes page. The phone transcript is unchanged
+from v0.27.
+
+Decided 2026-09-30. Branches `feat/v0.30.0-sessions` in both repos, from
+current `main` (`hermes-be` `3e001cf`, `hermes-fe` `f19a725`).
+
+### Locked
+
+- **Sessions.** The database stores SHA-256 of the bearer token. Rows that
+  already exist are hashed in place, so current logins keep working. New
+  sessions are written only as hashes. `scope` is `member` or `guest`; this
+  release issues `member` only. Logout, a password change, and a password
+  reset close that account's live sockets. A socket whose session is gone or
+  expired is closed.
+- **Roles.** Rank is master, then admin, then member, then guest. `can()`
+  uses that rank. A guest cannot add someone to a room, open a DM, or start
+  or host Watch together. This release does not create guest accounts or
+  guest sessions.
+- **Master.** Exactly one. `bootstrap-master` opens that instance's database,
+  promotes an existing user, or creates one when `HERMES_BOOTSTRAP_PASSWORD`
+  is set. If a master already exists, the command gives master to the named
+  user and leaves the previous master as an admin. The API cannot appoint,
+  demote, or reset the master. The master can demote and reset admins and
+  members. An admin can reset members, and cannot change another admin's
+  role. A one-time reset token is still shown in the app, and only when the
+  actor outranks the target.
+- **Directory.** Members see people they share a room with. Admins and the
+  master see every account, so they can add someone who is not in a room
+  yet. Profile and presence updates go only to people who can already see
+  that user.
+- **Rooms.** Members and admins may still add people to a group and start a
+  DM. A guest may not. There is no accept step.
+- **Registration.** Stays open. New accounts are members, never admin, and
+  are not added to `#general`. People already in `#general` stay there.
+- **Messages.** Deleting a message requires current membership in that room,
+  for the sender and for an admin. An unknown id and a message in a room you
+  are not in look the same.
+- **Watch.** Any member of the room may start a session, and that check goes
+  through `can()`. Play, pause, and seek stay with the host or with an admin
+  or the master. A guest cannot start or host.
+- **YouTube.** The player is a `youtube-nocookie.com` embed. Hermes talks to
+  it with `postMessage` and only accepts replies from that origin. The
+  IFrame API script is not loaded in the page.
+- **Phone transcript.** Unchanged from v0.27.
+- Tested on `q1` behind Serve (`:4443`) before `p1`.
+- Not in scope: the gateway, invites, a waiting room, a master panel, and
+  issuing guest access (v0.31 and later). Announcement in
+  `docs/announcements/v0.30.0.md`.
 
 ## Backlog (unscheduled)
 

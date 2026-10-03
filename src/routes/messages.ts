@@ -11,7 +11,7 @@ import {
   revealRoomMembers,
 } from '../rooms';
 import { can } from '../authz';
-import { findSessionUser } from '../sessions';
+import { findSession, findSessionUser } from '../sessions';
 import { extractToken, normalizeRoomSlug, resolveUser, RouteContext } from './common';
 import {
   createMessageSchema,
@@ -114,16 +114,14 @@ export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext)
 
     const id = parsed.data.id;
     const actor = getUserByUsername(username);
-    const asAdmin = Boolean(actor && can(actor, 'message.admin_delete'));
+    const session = findSession(extractToken(request));
+    const asAdmin = Boolean(
+      actor && session && can({ ...actor, scope: session.scope }, 'message.admin_delete')
+    );
     const result = unsendMessage(id, username, { asAdmin });
     if ('error' in result) {
-      reply.code(result.error === 'not_found' ? 404 : 403);
-      return {
-        error:
-          result.error === 'not_found'
-            ? 'message not found'
-            : 'only the sender or an admin can delete',
-      };
+      reply.code(404);
+      return { error: 'message not found' };
     }
 
     ctx.broadcastToMembers(result.message.room, { type: 'message_deleted', message: result.message });

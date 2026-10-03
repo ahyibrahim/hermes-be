@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-test('registers with argon2id, first user is admin, SHA256 rehashes on login', async () => {
+test('registers with argon2id, new accounts are members, SHA256 rehashes on login', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-auth-'));
   process.env.HERMES_DB_PATH = path.join(tempDir, 'hermes.db');
 
@@ -16,7 +16,7 @@ test('registers with argon2id, first user is admin, SHA256 rehashes on login', a
 
   const alice = await registerUser('alice', 'hunter2');
   assert.equal(alice.username, 'alice');
-  assert.equal(alice.role, 'admin');
+  assert.equal(alice.role, 'member');
   assert.equal(getProfile('hermes')?.system, true);
   assert.equal(getProfile('hermes')?.role, 'member');
   assert.equal(await loginUser('hermes', 'anything'), null);

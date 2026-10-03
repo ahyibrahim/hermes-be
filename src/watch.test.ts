@@ -60,6 +60,8 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
       body: JSON.stringify({ username, password }),
     });
     assert.equal(register.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
 
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
@@ -123,6 +125,8 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
     const alice = await registerAndLogin('alice');
     const bob = await registerAndLogin('bob');
     const carol = await registerAndLogin('carol');
+    const { appointMaster } = await import('./auth');
+    appointMaster('alice');
 
     const a = await connectAuthed(alice.token);
     const b = await connectAuthed(bob.token);
@@ -221,7 +225,7 @@ test('watch together: start, join, control, leave, end, disconnect, auth', async
       1
     );
 
-    // 3. Non-host cannot pause; host can; admin (alice) can even if not host
+    // 3. Non-host cannot pause; host can; master (alice) can even if not host
     c.socket.send(JSON.stringify({ type: 'watch_join', room: 'general' }));
     await c.readOfType('watch_state');
     await c.readOfType('watch_peers');

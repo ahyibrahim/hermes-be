@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import fs from 'node:fs';
+import { can } from '../authz';
 import {
   addMembersToGroup,
   createGroupRoom,
@@ -16,9 +17,8 @@ import {
   markRoomRead,
   unreadCount,
 } from '../rooms';
-import { can } from '../authz';
 import { isRoomMember, listRoomMembers } from '../db';
-import { normalizeRoomSlug, resolveUser, RouteContext } from './common';
+import { normalizeRoomSlug, resolveSession, resolveUser, RouteContext } from './common';
 import {
   createDmSchema,
   createRoomSchema,
@@ -61,7 +61,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     }
 
     const me = getUserByUsername(username);
-    if (!me) {
+    const session = resolveSession(request, reply);
+    if (!me || !session) {
       reply.code(401);
       return { error: 'authentication required' };
     }
@@ -76,6 +77,13 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     const memberIds = Array.isArray(body.members)
       ? body.members.filter((id): id is number => typeof id === 'number' && Number.isInteger(id))
       : [];
+    if (
+      memberIds.length > 0 &&
+      !can({ ...me, scope: session.scope }, 'room.add_member')
+    ) {
+      reply.code(403);
+      return { error: 'forbidden' };
+    }
 
     const room = createGroupRoom(body.name, me.id, memberIds);
     const invited = room.members.filter((member) => member !== username);
@@ -91,7 +99,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     }
 
     const me = getUserByUsername(username);
-    if (!me) {
+    const session = resolveSession(request, reply);
+    if (!me || !session) {
       reply.code(401);
       return { error: 'authentication required' };
     }
@@ -100,6 +109,11 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     if (!parsed.success) {
       reply.code(400);
       return { error: 'userId is required' };
+    }
+
+    if (!can({ ...me, scope: session.scope }, 'dm.create')) {
+      reply.code(403);
+      return { error: 'forbidden' };
     }
 
     const body = parsed.data;
@@ -191,6 +205,17 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'authentication required' };
     }
 
+    const actor = getUserByUsername(username);
+    const session = resolveSession(request, reply);
+    if (!actor || !session) {
+      reply.code(401);
+      return { error: 'authentication required' };
+    }
+    if (!can({ ...actor, scope: session.scope }, 'room.add_member')) {
+      reply.code(403);
+      return { error: 'forbidden' };
+    }
+
     const rawBody = request.body as { room?: unknown; userIds?: unknown };
     if (!rawBody?.room || typeof rawBody.room !== 'string' || !rawBody.room.trim()) {
       reply.code(400);
@@ -234,7 +259,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
     }
 
     const actor = getUserByUsername(username);
-    if (!actor) {
+    const session = resolveSession(request, reply);
+    if (!actor || !session) {
       reply.code(401);
       return { error: 'authentication required' };
     }
@@ -267,7 +293,7 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'room not found' };
     }
     const target = getUserById(parsed.data.userId);
-    if (!can(actor, 'room.kick', { room, actorIsMember: isRoomMember(slug, username), target })) {
+    if (!can({ ...actor, scope: session.scope }, 'room.kick', { room, actorIsMember: isRoomMember(slug, username), target })) {
       reply.code(403);
       return { error: 'forbidden' };
     }
@@ -310,7 +336,8 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       }
 
       const actor = getUserByUsername(username);
-      if (!actor) {
+      const session = resolveSession(request, reply);
+      if (!actor || !session) {
         reply.code(401);
         return { error: 'authentication required' };
       }
@@ -332,7 +359,7 @@ export async function roomRoutes(fastify: FastifyInstance, ctx: RouteContext): P
         reply.code(404);
         return { error: 'room not found' };
       }
-      if (!can(actor, 'room.delete', { room, actorIsMember: isRoomMember(slug, username) })) {
+      if (!can({ ...actor, scope: session.scope }, 'room.delete', { room, actorIsMember: isRoomMember(slug, username) })) {
         reply.code(403);
         return { error: 'forbidden' };
       }

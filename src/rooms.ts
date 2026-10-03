@@ -1,6 +1,7 @@
 import { getDb } from './database';
 import { isoTimestamp } from './colors';
 import { hasControlChar } from './text';
+import { isUserRole, roleAtLeast, type UserRole } from './roles';
 
 export interface RoomRecord {
   id: number;
@@ -26,7 +27,7 @@ export interface RoomSummary extends RoomRecord {
 export interface PublicUser {
   id: number;
   username: string;
-  role: 'member' | 'admin';
+  role: UserRole;
   avatar_file_id: number | null;
   color: string | null;
   system: boolean;
@@ -55,7 +56,7 @@ function toSummary(room: RoomRecord): RoomSummary {
 type UserRow = {
   id: number;
   username: string;
-  role: 'member' | 'admin';
+  role: string;
   avatar_file_id: number | null;
   color: string | null;
   system: number | boolean | null;
@@ -70,7 +71,7 @@ function mapPublicUser(row: UserRow | undefined): PublicUser | undefined {
   return {
     id: row.id,
     username: row.username,
-    role: row.role,
+    role: isUserRole(row.role) ? row.role : 'guest',
     avatar_file_id: row.avatar_file_id,
     color: row.color,
     system: Number(row.system) === 1 || row.system === true,
@@ -101,6 +102,54 @@ export function listUsers(): PublicUser[] {
   )
     .map((row) => mapPublicUser(row))
     .filter((user): user is PublicUser => Boolean(user));
+}
+
+/** Accounts this person is allowed to see. Admins and master see every account. */
+export function listVisibleUsers(actor: { username: string; role: string }): PublicUser[] {
+  if (roleAtLeast(actor.role, 'admin')) {
+    return listUsers();
+  }
+
+  const columns = USER_COLUMNS.split(', ')
+    .map((column) => `u.${column.trim()}`)
+    .join(', ');
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT ${columns}
+       FROM users u
+       WHERE u.username = ?
+          OR EXISTS (
+            SELECT 1
+            FROM room_members mine
+            JOIN users me ON me.id = mine.user_id
+            JOIN room_members theirs ON theirs.room_id = mine.room_id
+            WHERE me.username = ? AND theirs.user_id = u.id
+          )
+       ORDER BY u.username ASC`
+    )
+    .all(actor.username, actor.username) as UserRow[];
+  return rows.map((row) => mapPublicUser(row)).filter((user): user is PublicUser => Boolean(user));
+}
+
+/** Usernames whose directory includes `username`, including that account. */
+export function usersWhoCanSee(username: string): string[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT DISTINCT viewer.username AS username
+       FROM users viewer
+       WHERE viewer.role IN ('admin', 'master')
+          OR viewer.username = ?
+          OR EXISTS (
+            SELECT 1
+            FROM room_members mine
+            JOIN room_members theirs ON theirs.room_id = mine.room_id
+            JOIN users subject ON subject.id = theirs.user_id
+            WHERE mine.user_id = viewer.id AND subject.username = ?
+          )
+       ORDER BY viewer.username ASC`
+    )
+    .all(username, username) as Array<{ username: string }>;
+  return rows.map((row) => row.username);
 }
 
 export function getRoomBySlug(slug: string): RoomRecord | undefined {
@@ -432,19 +481,20 @@ export function countAdmins(): number {
 
 export function setUserRole(
   username: string,
-  role: 'member' | 'admin'
-): PublicUser | { error: 'not_found' | 'system_user' | 'last_admin' } {
+  role: 'member' | 'admin',
+  options: { allowLastAdmin?: boolean } = {}
+): PublicUser | { error: 'not_found' | 'system_user' | 'last_admin' | 'forbidden' } {
   const user = getUserByUsername(username);
   if (!user) {
     return { error: 'not_found' };
   }
-  if (user.system) {
-    return { error: 'system_user' };
+  if (user.system || user.role === 'master') {
+    return user.system ? { error: 'system_user' } : { error: 'forbidden' };
   }
   if (user.role === role) {
     return user;
   }
-  if (user.role === 'admin' && role === 'member' && countAdmins() <= 1) {
+  if (user.role === 'admin' && role === 'member' && countAdmins() <= 1 && !options.allowLastAdmin) {
     return { error: 'last_admin' };
   }
   getDb().prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);

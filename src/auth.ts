@@ -3,11 +3,12 @@ import argon2 from 'argon2';
 import { getDb } from './database';
 import { createSession, deleteOtherSessions } from './sessions';
 import { isoTimestamp, USER_COLOR_PALETTE, type UserColor } from './colors';
-import { takenColors } from './rooms';
+import { addUserToGeneralRoom, getUserByUsername, takenColors } from './rooms';
+import type { UserRole } from './roles';
 import { isSystemUsername, SYSTEM_USERNAME } from './system-user';
 import { isUsername } from './text';
 
-export type UserRole = 'member' | 'admin';
+export type { UserRole };
 
 export interface AuthUser {
   id: number;
@@ -61,13 +62,6 @@ function nextColor(): UserColor {
   return USER_COLOR_PALETTE.find((slot) => !taken.has(slot)) ?? USER_COLOR_PALETTE[taken.size % USER_COLOR_PALETTE.length];
 }
 
-function nextRole(): UserRole {
-  const row = getDb()
-    .prepare('SELECT COUNT(*) AS n FROM users WHERE COALESCE(system, 0) = 0')
-    .get() as { n: number };
-  return row.n === 0 ? 'admin' : 'member';
-}
-
 export async function registerUser(username: string, password: string): Promise<AuthUser> {
   const normalizedUsername = username.trim().toLowerCase();
   if (!normalizedUsername || !password.trim()) {
@@ -80,7 +74,7 @@ export async function registerUser(username: string, password: string): Promise<
     throw new Error('username is reserved');
   }
 
-  const role = nextRole();
+  const role: UserRole = 'member';
   const color = nextColor();
   const hashed = await hashPassword(password);
   const stmt = getDb().prepare('INSERT INTO users (username, password, role, color) VALUES (?, ?, ?, ?)');
@@ -107,6 +101,57 @@ export async function registerUser(username: string, password: string): Promise<
     avatar_file_id: null,
     color,
     system: false,
+  };
+}
+
+/**
+ * Appoint the single master. An existing account is promoted. A new account
+ * needs a password. Any previous master becomes an admin. The master is a
+ * member of #general.
+ */
+export async function appointMaster(username: string, password?: string): Promise<AuthUser> {
+  const normalizedUsername = username.trim().toLowerCase();
+  if (!isUsername(normalizedUsername) || isSystemUsername(normalizedUsername)) {
+    throw new Error('username must be 2-24 characters: a-z, 0-9, underscore');
+  }
+
+  const existing = getUserByUsername(normalizedUsername);
+  if (!existing && !password?.trim()) {
+    throw new Error('password is required');
+  }
+
+  const hashed = existing ? null : await hashPassword(password!.trim());
+  const color = existing?.color ?? nextColor();
+  const db = getDb();
+  const apply = db.transaction(() => {
+    db.prepare("UPDATE users SET role = 'admin' WHERE role = 'master' AND username != ?").run(
+      normalizedUsername
+    );
+    if (existing) {
+      db.prepare("UPDATE users SET role = 'master' WHERE username = ?").run(normalizedUsername);
+      return;
+    }
+    db.prepare('INSERT INTO users (username, password, role, color) VALUES (?, ?, ?, ?)').run(
+      normalizedUsername,
+      hashed,
+      'master',
+      color
+    );
+  });
+  apply();
+
+  const appointed = getUserByUsername(normalizedUsername);
+  if (!appointed) {
+    throw new Error('could not appoint master');
+  }
+  addUserToGeneralRoom(appointed.id);
+  return {
+    id: appointed.id,
+    username: appointed.username,
+    role: 'master',
+    avatar_file_id: appointed.avatar_file_id,
+    color: appointed.color,
+    system: appointed.system,
   };
 }
 

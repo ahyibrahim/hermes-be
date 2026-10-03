@@ -79,6 +79,10 @@ test('v0.19.0 REST: roles, kick, admin-delete, delete-group', async () => {
   await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
   const bobReg = await json('POST', '/auth/register', { username: 'bob', password: 'secret2' });
   const caraReg = await json('POST', '/auth/register', { username: 'cara', password: 'secret3' });
+  const { appointMaster } = await import('./auth');
+  const { seatInGeneral } = await import('./test-seat');
+  appointMaster('alice');
+  seatInGeneral('alice', 'bob', 'cara');
   const bobId = (bobReg.data as { user: { id: number } }).user.id;
   const caraId = (caraReg.data as { user: { id: number } }).user.id;
 
@@ -100,20 +104,18 @@ test('v0.19.0 REST: roles, kick, admin-delete, delete-group', async () => {
   assert.equal(promote.status, 200);
   assert.equal((promote.data as { role: string }).role, 'admin');
 
-  const demoteAliceLast = await json('PATCH', '/users/alice/role', { role: 'member' }, bobToken);
-  assert.equal(demoteAliceLast.status, 200);
+  const demoteMaster = await json('PATCH', '/users/alice/role', { role: 'member' }, bobToken);
+  assert.equal(demoteMaster.status, 403);
 
-  const demoteLast = await json('PATCH', '/users/bob/role', { role: 'member' }, bobToken);
-  assert.equal(demoteLast.status, 400);
-  assert.match(String((demoteLast.data as { error: string }).error), /last admin/i);
-
-  await json('PATCH', '/users/alice/role', { role: 'admin' }, bobToken);
   await json('PATCH', '/users/bob/role', { role: 'member' }, aliceToken);
 
   const hermesRole = await json('PATCH', '/users/hermes/role', { role: 'admin' }, aliceToken);
   assert.equal(hermesRole.status, 400);
 
-  // Create group as bob (creator), alice is admin
+  const aliceMe = await json('GET', '/users/me', undefined, aliceToken);
+  const aliceId = (aliceMe.data as { id: number }).id;
+
+  // Create group as bob (creator), alice is master
   const group = await json('POST', '/rooms', { name: 'party', members: [caraId] }, bobToken);
   assert.equal(group.status, 200);
   const groupSlug = (group.data as { slug: string; creator_id: number }).slug;
@@ -129,9 +131,10 @@ test('v0.19.0 REST: roles, kick, admin-delete, delete-group', async () => {
   const msg = await json('POST', '/messages', { room: groupSlug, content: 'cara says hi' }, caraToken);
   assert.equal(msg.status, 200);
   const msgId = (msg.data as { id: number }).id;
+  await json('POST', '/rooms/members', { room: groupSlug, userIds: [aliceId] }, bobToken);
 
   const bobCannot = await json('DELETE', `/messages/${msgId}`, undefined, bobToken);
-  assert.equal(bobCannot.status, 403);
+  assert.equal(bobCannot.status, 404);
 
   const adminDelete = await json('DELETE', `/messages/${msgId}`, undefined, aliceToken);
   assert.equal(adminDelete.status, 200);

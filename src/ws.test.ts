@@ -53,6 +53,8 @@ test('live websocket contract', async () => {
       body: JSON.stringify({ username, password }),
     });
     assert.equal(register.status, 200);
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
 
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',

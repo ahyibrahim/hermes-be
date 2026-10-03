@@ -14,7 +14,7 @@ const PNG = Buffer.from(
   'base64'
 );
 
-test('v0.7.0 REST: profile, password change, avatar, first user is admin', async () => {
+test('v0.7.0 REST: profile, password change, avatar', async () => {
   const { closeDb } = await import('./database');
   closeDb();
   const { createApp } = await import('./app');
@@ -45,11 +45,13 @@ test('v0.7.0 REST: profile, password change, avatar, first user is admin', async
   const regAlice = await json('POST', '/auth/register', { username: 'alice', password: 'secret1' });
   assert.equal(regAlice.status, 200);
   const alice = (regAlice.data as { user: { id: number; role: string } }).user;
-  assert.equal(alice.role, 'admin');
+  assert.equal(alice.role, 'member');
 
   const regBob = await json('POST', '/auth/register', { username: 'bob', password: 'secret2' });
   assert.equal((regBob.data as { user: { role: string } }).user.role, 'member');
   const bobId = (regBob.data as { user: { id: number } }).user.id;
+  const { seatInGeneral } = await import('./test-seat');
+  seatInGeneral('alice', 'bob');
 
   const loginAlice = await json('POST', '/auth/login', { username: 'alice', password: 'secret1' });
   const aliceToken = (loginAlice.data as { token: string }).token;
@@ -60,7 +62,7 @@ test('v0.7.0 REST: profile, password change, avatar, first user is admin', async
   const me = await json('GET', '/users/me', undefined, aliceToken);
   assert.equal(me.status, 200);
   assert.equal((me.data as { username: string; role: string }).username, 'alice');
-  assert.equal((me.data as { role: string }).role, 'admin');
+  assert.equal((me.data as { role: string }).role, 'member');
   assert.equal((me.data as { avatar_file_id: number | null }).avatar_file_id, null);
 
   const users = await json('GET', '/users', undefined, aliceToken);
@@ -68,7 +70,7 @@ test('v0.7.0 REST: profile, password change, avatar, first user is admin', async
   const aliceRow = (users.data as Array<{ username: string; role: string }>).find(
     (row) => row.username === 'alice'
   );
-  assert.equal(aliceRow?.role, 'admin');
+  assert.equal(aliceRow?.role, 'member');
 
   const badPassword = await json(
     'PATCH',

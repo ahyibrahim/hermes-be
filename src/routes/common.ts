@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { findSessionUser } from '../sessions';
+import { findSession, findSessionUser, type SessionScope } from '../sessions';
 import { LinkPreviewService } from '../link-preview';
 
 export type RoomSocket = {
@@ -20,6 +20,7 @@ export type RoomSocket = {
 export type TrackedSocket = {
   socket: RoomSocket['socket'];
   user: string;
+  sessionHash?: string;
 };
 
 export type WatchSession = {
@@ -161,19 +162,27 @@ export function unwrapSocket(connection: unknown): any {
 }
 
 export function resolveUser(request: FastifyRequest, reply: FastifyReply): string | null {
+  const session = resolveSession(request, reply);
+  return session?.username ?? null;
+}
+
+export function resolveSession(
+  request: FastifyRequest,
+  reply: FastifyReply
+): { username: string; scope: SessionScope } | null {
   const token = extractToken(request);
   if (!token) {
     reply.code(401);
     return null;
   }
 
-  const username = findSessionUser(token);
-  if (!username) {
+  const session = findSession(token);
+  if (!session) {
     reply.code(401);
     return null;
   }
 
-  return username;
+  return session;
 }
 
 export type RouteContext = {
@@ -195,6 +204,7 @@ export type RouteContext = {
   teardownRoom: (room: string, formerMembers: string[], deletedBy: string) => void;
   connectedUsers: (room: string) => string[];
   onlineUsernames: () => string[];
+  closeUserSockets: (username: string, filter?: { onlyHash?: string; exceptHash?: string }) => void;
   touchTyping: (room: string, username: string) => void;
   stopTyping: (room: string, username: string, broadcast?: boolean) => void;
   clearTypingForUser: (username: string) => void;

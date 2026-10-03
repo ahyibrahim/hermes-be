@@ -35,6 +35,8 @@ test('file upload, download, and live room broadcast', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password: 'hunter2' }),
     });
+    const { seatInGeneral } = await import('./test-seat');
+    seatInGeneral(username);
     const login = await fetch(`${origin}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
