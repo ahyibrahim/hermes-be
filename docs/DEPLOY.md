@@ -137,9 +137,16 @@ in again. Point the CLI at
 `HERMES_BASE_URL=https://ying-1.tail18942a.ts.net`.
 
 **NAT / TURN.** Direct connections work on the tailnet. `GET /ice` serves
-Google STUN by default (`HERMES_ICE_SERVERS`). coturn is not deployed. If a
-future off-tailnet NAT test fails, add a TURN URL to `HERMES_ICE_SERVERS` — do
-not stand up coturn until that test says so.
+Google STUN by default (`HERMES_ICE_SERVERS`). When `HERMES_TURN_URLS` and
+`HERMES_TURN_SECRET` are set, each member also receives a short-lived TURN
+credential. coturn is not deployed. Do not stand up coturn until an
+off-tailnet call says it is needed.
+
+**Guest gateway (v0.31).** The process also listens on `127.0.0.1` at
+`HERMES_GATEWAY_PORT`, or `PORT + 10` when that is unset (`p1` is 3010, `q1`
+is 3011). It answers 404 until the master opens it in the app. Do not point
+Tailscale Serve or Funnel at that port. `p1` deploy must not set
+`HERMES_REPO_URL` or `HERMES_FE_REPO_URL`.
 
 ## Deploy runbook
 

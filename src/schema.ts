@@ -804,6 +804,52 @@ export function migrateSchema(db: SqliteDb, log: SchemaLogger = silentLogger): v
   seedSystemHermes(db, log);
   postReleaseAnnouncement(db, log);
   migrateDmSlugs(db, log);
+  addColumnIfMissing(db, log, 'users', 'guest_status', 'TEXT');
+  addColumnIfMissing(db, log, 'room_members', 'history_after_id', 'INTEGER');
+  ensureTable(
+    db,
+    log,
+    'settings',
+    `CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`
+  );
+  ensureTable(
+    db,
+    log,
+    'invites',
+    `CREATE TABLE IF NOT EXISTS invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_by INTEGER NOT NULL,
+      max_uses INTEGER NOT NULL,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL
+    )`
+  );
+  ensureTable(
+    db,
+    log,
+    'invite_rooms',
+    `CREATE TABLE IF NOT EXISTS invite_rooms (
+      invite_id INTEGER NOT NULL,
+      room_slug TEXT NOT NULL,
+      PRIMARY KEY (invite_id, room_slug)
+    )`
+  );
+  ensureTable(
+    db,
+    log,
+    'guest_rooms',
+    `CREATE TABLE IF NOT EXISTS guest_rooms (
+      user_id INTEGER NOT NULL,
+      room_slug TEXT NOT NULL,
+      PRIMARY KEY (user_id, room_slug)
+    )`
+  );
 }
 
 /** DM slugs are `dm:<lowerUserId>:<higherUserId>`, independent of display names. */

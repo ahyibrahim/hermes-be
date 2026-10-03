@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { getDb } from './database';
+import { retireGuestAccount } from './guests';
 
 export type SessionScope = 'member' | 'guest';
 
@@ -48,24 +49,31 @@ export function sessionTtlDays(): number {
 }
 
 export function pruneExpiredSessions(now = Date.now()): number {
-  const result = getDb()
-    .prepare('DELETE FROM sessions WHERE expires_at <= ?')
-    .run(new Date(now).toISOString());
+  const iso = new Date(now).toISOString();
+  const guests = getDb()
+    .prepare(`SELECT DISTINCT username FROM sessions WHERE scope = 'guest' AND expires_at <= ?`)
+    .all(iso) as Array<{ username: string }>;
+  const result = getDb().prepare('DELETE FROM sessions WHERE expires_at <= ?').run(iso);
+  for (const guest of guests) {
+    retireGuestAccount(guest.username);
+  }
   return Number(result.changes);
 }
 
 export function createSession(
   username: string,
   now = Date.now(),
-  scope: SessionScope = 'member'
+  scope: SessionScope = 'member',
+  ttlMs?: number
 ): SessionRecord {
   const token = crypto.randomBytes(32).toString('base64url');
+  const lifetime = ttlMs != null && Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : sessionTtlDays() * DAY_MS;
   const record: SessionRecord = {
     token,
     username,
     scope,
     created_at: new Date(now).toISOString(),
-    expires_at: new Date(now + sessionTtlDays() * DAY_MS).toISOString(),
+    expires_at: new Date(now + lifetime).toISOString(),
   };
 
   pruneExpiredSessions(now);
@@ -88,6 +96,11 @@ export function deleteSession(token: string | undefined): boolean {
     .prepare('DELETE FROM sessions WHERE token_hash = ?')
     .run(hashSessionToken(trimmed));
   return Number(result.changes) > 0;
+}
+
+export function deleteSessionsForUser(username: string): number {
+  const result = getDb().prepare('DELETE FROM sessions WHERE username = ?').run(username);
+  return Number(result.changes);
 }
 
 export function deleteOtherSessions(username: string, keepToken: string | undefined): number {
@@ -122,6 +135,9 @@ function readSession(token: string | undefined, now: number): SessionRow | null 
   const expiresAt = Date.parse(row.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= now) {
     getDb().prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashSessionToken(trimmed));
+    if (row.scope === 'guest') {
+      retireGuestAccount(row.username);
+    }
     return null;
   }
 
@@ -151,8 +167,8 @@ export function sessionIsLive(tokenHash: string | undefined, now = Date.now()): 
   }
 
   const row = getDb()
-    .prepare('SELECT expires_at FROM sessions WHERE token_hash = ?')
-    .get(tokenHash) as { expires_at: string } | undefined;
+    .prepare('SELECT username, scope, expires_at FROM sessions WHERE token_hash = ?')
+    .get(tokenHash) as { username: string; scope: string; expires_at: string } | undefined;
   if (!row) {
     return false;
   }
@@ -160,6 +176,9 @@ export function sessionIsLive(tokenHash: string | undefined, now = Date.now()): 
   const expiresAt = Date.parse(row.expires_at);
   if (!Number.isFinite(expiresAt) || expiresAt <= now) {
     getDb().prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+    if (row.scope === 'guest') {
+      retireGuestAccount(row.username);
+    }
     return false;
   }
 

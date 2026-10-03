@@ -35,6 +35,9 @@ import { fileRoutes } from './routes/files';
 import { previewRoutes } from './routes/preview';
 import { createCallState } from './routes/calls';
 import { registerWsHandler } from './ws/handler';
+import { createGateway } from './gateway';
+import { setGuestRetiredHandler } from './guests';
+import { masterRoutes } from './routes/master';
 import { WS_MAX_PAYLOAD_BYTES } from './ws/limits';
 import { registerSecurityHeaders } from './security-headers';
 
@@ -105,6 +108,7 @@ export type CreateAppOptions = {
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{
   app: FastifyInstance;
+  gateway: FastifyInstance;
   roomClients: Map<string, Set<RoomSocket>>;
   callMembers: Map<string, Set<string>>;
 }> {
@@ -301,6 +305,21 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
 
   callState.setBroadcastHelpers(sendToUser, broadcastToMembers);
 
+  setGuestRetiredHandler((username, rooms) => {
+    closeUserSockets(username);
+    for (const slug of rooms) {
+      evictFromRoom(slug, username);
+      const members = listRoomMembers(slug);
+      broadcastToMembers(slug, {
+        type: 'member_removed',
+        room: slug,
+        removed_by: username,
+        users: [username],
+        members,
+      });
+    }
+  });
+
   const ctx: RouteContext = {
     roomClients,
     userSockets,
@@ -382,9 +401,15 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{
   await messageRoutes(fastify, ctx);
   await fileRoutes(fastify, ctx);
   await previewRoutes(fastify, ctx);
+  await masterRoutes(fastify, ctx);
   await registerWsHandler(fastify, ctx);
 
   await maybeServeWebBundle(fastify);
 
-  return { app: fastify, roomClients, callMembers: callState.callMembers };
+  const gateway = await createGateway(ctx, {
+    loggerDestination: options.loggerDestination,
+    logLevel: options.logLevel,
+  });
+
+  return { app: fastify, gateway, roomClients, callMembers: callState.callMembers };
 }

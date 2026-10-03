@@ -1,11 +1,13 @@
 import { createApp } from './app';
 import { closeDb } from './database';
+import { gatewayPort } from './gateway';
 
 async function bootstrap() {
-  const { app } = await createApp();
+  const { app, gateway } = await createApp();
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HERMES_HOST?.trim() || '127.0.0.1';
   await app.listen({ port, host });
+  await gateway.listen({ port: gatewayPort(), host: '127.0.0.1' });
 
   let stopping = false;
   const shutdown = (signal: NodeJS.Signals) => {
@@ -14,8 +16,10 @@ async function bootstrap() {
     }
     stopping = true;
     app.log.info({ signal }, 'Shutting down gracefully...');
-    app
+    gateway
       .close()
+      .catch(() => undefined)
+      .then(() => app.close())
       .then(() => {
         closeDb();
         process.exit(0);

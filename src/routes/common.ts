@@ -113,6 +113,30 @@ export function errorFrame(content: string) {
   return { type: 'error', content, message: content };
 }
 
+export const GUEST_COOKIE = 'hermes_guest';
+
+export function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) {
+      continue;
+    }
+    const key = part.slice(0, eq).trim();
+    if (key !== name) {
+      continue;
+    }
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export function extractBearer(request: FastifyRequest): string | undefined {
   const header = request.headers.authorization;
   if (typeof header === 'string' && header.toLowerCase().startsWith('bearer ')) {
@@ -177,7 +201,7 @@ export function resolveSession(
   }
 
   const session = findSession(token);
-  if (!session) {
+  if (!session || session.scope !== 'member') {
     reply.code(401);
     return null;
   }

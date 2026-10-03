@@ -7,11 +7,12 @@ import {
 } from '../db';
 import {
   getUserByUsername,
+  historyAfterId,
   markRoomRead,
   revealRoomMembers,
 } from '../rooms';
 import { can } from '../authz';
-import { findSession, findSessionUser } from '../sessions';
+import { findSession } from '../sessions';
 import { extractToken, normalizeRoomSlug, resolveUser, RouteContext } from './common';
 import {
   createMessageSchema,
@@ -54,7 +55,7 @@ export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext)
       markRoomRead(me.id, slug);
     }
 
-    return listMessages(slug, parsed.data.before, parsed.data.limit);
+    return listMessages(slug, parsed.data.before, parsed.data.limit, historyAfterId(slug, username));
   });
 
   fastify.post('/messages', async (request, reply) => {
@@ -83,11 +84,12 @@ export async function messageRoutes(fastify: FastifyInstance, ctx: RouteContext)
       return { error: 'authentication required' };
     }
 
-    const username = findSessionUser(token);
-    if (!username) {
+    const session = findSession(token);
+    if (!session || session.scope !== 'member') {
       reply.code(401);
-      return { error: 'invalid token' };
+      return { error: session ? 'authentication required' : 'invalid token' };
     }
+    const username = session.username;
 
     if (!isRoomMember(slug, username)) {
       reply.code(403);

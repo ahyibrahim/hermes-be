@@ -289,6 +289,9 @@ export function getOrCreateDmRoom(userId: number, otherUserId: number): RoomSumm
   if (other?.system) {
     throw new Error('cannot DM a system user');
   }
+  if (other?.role === 'guest') {
+    throw new Error('cannot DM a guest');
+  }
 
   const members = getDb()
     .prepare('SELECT id, username FROM users WHERE id IN (?, ?) ORDER BY id ASC')
@@ -361,6 +364,9 @@ export function addMembersToGroup(
     }
     if (user.system) {
       return { error: 'cannot add a system user', status: 400 };
+    }
+    if (user.role === 'guest') {
+      return { error: 'cannot add a guest', status: 400 };
     }
     resolved.push(user);
   }
@@ -542,17 +548,46 @@ export function revealRoomMembers(slug: string): void {
 
 const LAST_MESSAGE_PREVIEW_CHARS = 80;
 
-export function lastMessagePreview(slug: string): LastMessagePreview | null {
+export function historyAfterId(slug: string, username: string): number | null {
   const row = getDb()
     .prepare(
-      `SELECT m.id, m.sender, m.content, m.deleted_at, m.file_id, f.original_name
-       FROM messages m
-       LEFT JOIN files f ON f.id = m.file_id
-       WHERE m.room = ?
-       ORDER BY m.id DESC
-       LIMIT 1`
+      `SELECT rm.history_after_id AS after_id
+       FROM room_members rm
+       JOIN rooms r ON r.id = rm.room_id
+       JOIN users u ON u.id = rm.user_id
+       WHERE r.slug = ? AND u.username = ?`
     )
-    .get(slug) as
+    .get(slug, username) as { after_id: number | null } | undefined;
+  if (!row || row.after_id == null) {
+    return null;
+  }
+  return Number(row.after_id);
+}
+
+export function lastMessagePreview(slug: string, afterId?: number | null): LastMessagePreview | null {
+  const row = (
+    afterId == null
+      ? getDb()
+          .prepare(
+            `SELECT m.id, m.sender, m.content, m.deleted_at, m.file_id, f.original_name
+             FROM messages m
+             LEFT JOIN files f ON f.id = m.file_id
+             WHERE m.room = ?
+             ORDER BY m.id DESC
+             LIMIT 1`
+          )
+          .get(slug)
+      : getDb()
+          .prepare(
+            `SELECT m.id, m.sender, m.content, m.deleted_at, m.file_id, f.original_name
+             FROM messages m
+             LEFT JOIN files f ON f.id = m.file_id
+             WHERE m.room = ? AND m.id > ?
+             ORDER BY m.id DESC
+             LIMIT 1`
+          )
+          .get(slug, afterId)
+  ) as
     | {
         id: number;
         sender: string;
@@ -579,11 +614,11 @@ export function lastMessagePreview(slug: string): LastMessagePreview | null {
   };
 }
 
-export function unreadCount(userId: number, slug: string): number {
+export function unreadCount(userId: number, slug: string, afterId?: number | null): number {
   const read = getDb()
     .prepare('SELECT last_message_id FROM room_reads WHERE user_id = ? AND room = ?')
     .get(userId, slug) as { last_message_id: number } | undefined;
-  const watermark = read?.last_message_id ?? 0;
+  const watermark = Math.max(read?.last_message_id ?? 0, afterId ?? 0);
   const row = getDb()
     .prepare(
       `SELECT COUNT(*) AS n FROM messages
