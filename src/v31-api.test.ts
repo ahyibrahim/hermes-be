@@ -177,11 +177,9 @@ test('v0.31.0: gateway invites, waiting room, and per-user TURN credentials', as
     );
     assert.ok(contents.includes('before the guest'));
     assert.ok(contents.includes('welcome'));
-    assert.ok(contents.includes('note.txt'));
-    const attachment = (kept.data as { messages: Array<{ content: string; file_id: number | null }> }).messages.find(
-      (message) => message.content === 'note.txt'
-    );
-    assert.equal(attachment?.file_id ?? null, null);
+    assert.equal(contents.includes('note.txt'), false);
+    const gone = getDb().prepare('SELECT id FROM users WHERE username = ?').get('guest_1');
+    assert.equal(gone, undefined);
 
     const after = await json(guestOrigin, 'GET', '/me', undefined, undefined, cookie);
     assert.equal(after.status, 401);

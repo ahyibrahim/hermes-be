@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { guestStatus, retireGuestAccount } from '../guests';
+import { guestStatus, purgeGuestAccount } from '../guests';
 import { gatewayPort } from '../gateway';
 import {
   admitGuest,
@@ -14,7 +14,6 @@ import {
   setGatewayOpen,
 } from '../invites';
 import { getUserByUsername } from '../rooms';
-import { deleteSessionsForUser } from '../sessions';
 import { normalizeRoomSlug, resolveSession, RouteContext } from './common';
 
 const createInviteSchema = z.object({
@@ -163,8 +162,7 @@ export async function masterRoutes(fastify: FastifyInstance, ctx: RouteContext):
       reply.code(404);
       return { error: 'guest not found' };
     }
-    deleteSessionsForUser(username);
-    retireGuestAccount(username);
+    purgeGuestAccount(username);
     request.log.info({ event: 'guest_remove', user: master.username, guest: username }, 'guest removed');
     return { ok: true };
   });

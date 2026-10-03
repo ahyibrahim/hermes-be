@@ -1507,10 +1507,12 @@ current `main` (`hermes-be` `8b17f3f`, `hermes-fe` `49d5502`).
   see messages from that moment on. The people list shows them as a guest.
   They can read and send in those rooms, including uploads. They cannot
   start a DM, add anyone, call, or host Watch together.
-- **Removal.** The master can remove a guest, and a guest session also ends
-  at 12 hours. Either way the live connection closes, their uploads are
-  deleted, and their messages stay in the room under that account. The
-  display name can be chosen again.
+- **Removal.** The master can remove a guest. That asks first, then deletes
+  the account and that guest's messages. Other people's messages stay. A
+  guest session also ends at 12 hours. That end still keeps the messages
+  and the account. Either way the live connection closes and their uploads
+  are deleted. An open transcript keeps the lines until the room is opened
+  again. The display name can be chosen again.
 - **Call setup.** On the tailnet app, `/ice` keeps returning the public STUN
   servers. When a TURN server is configured (`HERMES_TURN_URLS` and
   `HERMES_TURN_SECRET`), each member also receives a credential that expires
@@ -1546,3 +1548,5 @@ label until then.
 - Phone transcript: sending a message makes the transcript bob while it
   settles, and with the keyboard open it scrolls past the end
   (`apps/web/src/lib/chat/scroll-pin.svelte.ts`)
+- Archive a chat, so a room's history can be kept aside instead of staying
+  in the live transcript or being deleted with a guest

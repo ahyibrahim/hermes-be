@@ -197,10 +197,15 @@ export function listOpenGuests(): GuestSummary[] {
 }
 
 function nextGuestUsername(): string {
-  const rows = getDb().prepare("SELECT username FROM users WHERE username LIKE 'guest_%'").all() as Array<{
+  const db = getDb();
+  const rows = db.prepare("SELECT username FROM users WHERE username LIKE 'guest_%'").all() as Array<{
     username: string;
   }>;
-  let max = 0;
+  const stored = db.prepare("SELECT value FROM settings WHERE key = 'guest_seq'").get() as { value: string } | undefined;
+  let max = Number(stored?.value ?? '0');
+  if (!Number.isFinite(max) || max < 0) {
+    max = 0;
+  }
   for (const row of rows) {
     const match = /^guest_(\d+)$/.exec(row.username);
     if (match) {
@@ -211,6 +216,9 @@ function nextGuestUsername(): string {
   while (getUserByUsername(`guest_${n}`)) {
     n += 1;
   }
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+  ).run('guest_seq', String(n));
   return `guest_${n}`;
 }
 
