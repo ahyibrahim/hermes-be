@@ -48,7 +48,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.27.0 - Hardening: exposure and content (live on `p1`)
 - [x] v0.28.0 - Hardening: previews, removal, input (live on `p1`)
 - [x] v0.29.0 - Platform and supply chain (live on `p1`)
-- [ ] v0.30.0 - Sessions, roles, and scoping
+- [x] v0.30.0 - Sessions, roles, and scoping
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1467,7 +1467,7 @@ current `main` (`hermes-be` `3e001cf`, `hermes-fe` `f19a725`).
 - Tested on `q1` behind Serve (`:4443`) before `p1`.
 - Not in scope: the gateway, invites, a waiting room, a master panel, and
   issuing guest access (v0.31 and later). Announcement in
-  `docs/announcements/v0.30.0.md` when this release is ready to deploy.
+  `docs/announcements/v0.30.0.md`.
 
 ## Backlog (unscheduled)
 
