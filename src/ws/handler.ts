@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { isRoomMember } from '../db';
+import { guestStatus } from '../guests';
 import { getUserByUsername, markRoomRead } from '../rooms';
 import { can } from '../authz';
 import { findSession, hashSessionToken, sessionIsLive } from '../sessions';
@@ -7,7 +8,9 @@ import { normalizeYouTubeUrl, parseYouTubeVideoId } from '../youtube';
 import {
   errorFrame,
   extractBearer,
+  GUEST_COOKIE,
   normalizeRoomSlug,
+  readCookie,
   PING_INTERVAL_MS,
   PONG_TIMEOUT_MS,
   RoomSocket,
@@ -27,7 +30,12 @@ import {
 } from './limits';
 import { wsFrameSchema, type LooseWsFrame } from './frames';
 
-export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
+export async function registerWsHandler(
+  fastify: FastifyInstance,
+  ctx: RouteContext,
+  options: { audience?: 'member' | 'guest' } = {}
+): Promise<void> {
+  const audience = options.audience ?? 'member';
   const lastPong = new WeakMap<object, number>();
 
   function attachUserSocket(
@@ -95,10 +103,18 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
           return reply.code(403).send({ error: 'origin not allowed' });
         }
 
-        const token = extractBearer(request) ?? (request.query as { token?: string }).token;
+        const token =
+          audience === 'guest'
+            ? readCookie(request.headers.cookie, GUEST_COOKIE)
+            : extractBearer(request) ?? (request.query as { token?: string }).token;
         if (typeof token === 'string' && token.trim()) {
           const session = findSession(token);
-          if (!session) {
+          const guestOk =
+            audience === 'guest' &&
+            session?.scope === 'guest' &&
+            guestStatus(session.username) === 'admitted';
+          const memberOk = audience === 'member' && session?.scope === 'member';
+          if (!session || (!guestOk && !memberOk)) {
             request.log.info(
               { event: 'ws_unauthorized', reason: 'invalid_token' },
               'websocket handshake rejected'
@@ -241,11 +257,16 @@ export async function registerWsHandler(fastify: FastifyInstance, ctx: RouteCont
           }
           const payload = parsed.data as LooseWsFrame;
 
+          if (sessionScope === 'guest' && payload.type !== 'join_room' && payload.type !== 'typing') {
+            sendJson(socket, errorFrame('invalid message'));
+            return;
+          }
+
           if (payload.type === 'join_room') {
             if (!user) {
               const joinToken = typeof payload.token === 'string' ? payload.token.trim() : '';
               const joined = joinToken ? findSession(joinToken) : null;
-              if (!joined) {
+              if (!joined || joined.scope !== 'member') {
                 sendJson(socket, errorFrame('authentication required'));
                 socket.close?.();
                 return;

@@ -45,20 +45,29 @@ export interface MessagePage {
 const messageColumns =
   'id, room, sender, content, created_at, file_id, deleted_at';
 
-export function listMessages(room: string, before?: number, limit = MESSAGE_PAGE_SIZE): MessagePage {
+export function listMessages(
+  room: string,
+  before?: number,
+  limit = MESSAGE_PAGE_SIZE,
+  afterId?: number | null
+): MessagePage {
   const pageSize = Math.min(Math.max(Math.trunc(limit) || MESSAGE_PAGE_SIZE, 1), MESSAGE_PAGE_SIZE);
-  const rows =
-    before == null
-      ? (getDb()
-          .prepare(
-            `SELECT ${messageColumns} FROM messages WHERE room = ? ORDER BY id DESC LIMIT ?`
-          )
-          .all(room, pageSize + 1) as MessageRecord[])
-      : (getDb()
-          .prepare(
-            `SELECT ${messageColumns} FROM messages WHERE room = ? AND id < ? ORDER BY id DESC LIMIT ?`
-          )
-          .all(room, before, pageSize + 1) as MessageRecord[]);
+  const filters = ['room = ?'];
+  const params: Array<string | number> = [room];
+  if (afterId != null) {
+    filters.push('id > ?');
+    params.push(afterId);
+  }
+  if (before != null) {
+    filters.push('id < ?');
+    params.push(before);
+  }
+  params.push(pageSize + 1);
+  const rows = getDb()
+    .prepare(
+      `SELECT ${messageColumns} FROM messages WHERE ${filters.join(' AND ')} ORDER BY id DESC LIMIT ?`
+    )
+    .all(...params) as MessageRecord[];
 
   const hasMore = rows.length > pageSize;
   const page = (hasMore ? rows.slice(0, pageSize) : rows).reverse();

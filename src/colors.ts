@@ -13,6 +13,9 @@ export const USER_COLOR_PALETTE = [
 
 export type UserColor = (typeof USER_COLOR_PALETTE)[number];
 
+/** Shared by every guest. Members cannot pick it. */
+export const GUEST_COLOR = 'ash';
+
 export function isUserColor(value: string): value is UserColor {
   return (USER_COLOR_PALETTE as readonly string[]).includes(value);
 }

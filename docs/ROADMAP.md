@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.30.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.31.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -49,6 +49,7 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.28.0 - Hardening: previews, removal, input (live on `p1`)
 - [x] v0.29.0 - Platform and supply chain (live on `p1`)
 - [x] v0.30.0 - Sessions, roles, and scoping
+- [ ] v0.31.0 - Gateway, dark launch
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1469,6 +1470,62 @@ current `main` (`hermes-be` `3e001cf`, `hermes-fe` `f19a725`).
   issuing guest access (v0.31 and later). Announcement in
   `docs/announcements/v0.30.0.md`.
 
+## v0.31.0 - Gateway, dark launch
+
+The guest door exists on this host and stays unpublished. The master invites
+someone, they wait, and the master admits them to specific rooms. Friends on
+the tailnet keep using Hermes as they do now. The phone transcript is
+unchanged from v0.27.
+
+Decided 2026-10-03. Branches `feat/v0.31.0-gateway` in both repos, from
+current `main` (`hermes-be` `8b17f3f`, `hermes-fe` `49d5502`).
+
+### Locked
+
+- **Gateway.** A second listener on `127.0.0.1`, port `PORT + 10` unless
+  `HERMES_GATEWAY_PORT` is set (`p1` 3010, `q1` 3011). It starts closed: every
+  request is not found until the master opens it. Opening it does not publish
+  the port. Tailscale Serve and Funnel stay off it. The tailnet app does not
+  read cookies and does not accept a guest session. The gateway accepts only
+  a guest cookie (`HttpOnly`, `Secure`, `SameSite=Strict`) and does not serve
+  health, registration, password reset, the directory, link previews, or
+  call setup.
+- **Invites.** Master only. An invite is bound to one or more group rooms,
+  never `#general` and never a DM. The master sets how many times it can be
+  used and when it expires. The default is one use and 24 hours. The token is
+  stored as a hash. The link keeps it in the URL fragment, and Join sends it.
+  The plaintext token is shown once.
+- **Join.** The guest chooses a display name in the usual username shape.
+  It cannot match a member's name, or the display name of a guest who is
+  still here. The account is `guest_1`, `guest_2`, and so on. The room
+  shows the display name. The account name is on the hover card. Every
+  guest uses the same grey, which members cannot pick. Join creates a
+  guest with no password and a session of 12 hours, then a waiting room
+  with no messages and no member list. Admins and members cannot invite
+  or admit.
+- **Admission.** The master admits them into the rooms on that invite. They
+  see messages from that moment on. The people list shows them as a guest.
+  They can read and send in those rooms, including uploads. They cannot
+  start a DM, add anyone, call, or host Watch together.
+- **Removal.** The master can remove a guest. That asks first, then deletes
+  the account and that guest's messages. Other people's messages stay. A
+  guest session also ends at 12 hours. That end still keeps the messages
+  and the account. Either way the live connection closes and their uploads
+  are deleted. An open transcript keeps the lines until the room is opened
+  again. The display name can be chosen again.
+- **Call setup.** On the tailnet app, `/ice` keeps returning the public STUN
+  servers. When a TURN server is configured (`HERMES_TURN_URLS` and
+  `HERMES_TURN_SECRET`), each member also receives a credential that expires
+  and is issued for that member. Static credentials in `HERMES_ICE_SERVERS`
+  are not returned. coturn is not deployed. The gateway does not serve
+  `/ice`. Whether a guest can join a call stays undecided.
+- **Phone transcript.** Unchanged from v0.27.
+- Tested on `q1` from the host before `p1`. `p1` is not restarted for this
+  work until that rehearsal is approved.
+- Not in scope: Funnel, auto-close of a public door, and guest voice
+  (v0.32, after a hands-on pass and a review of the gateway). Announcement
+  in `docs/announcements/v0.31.0.md`.
+
 ## Backlog (unscheduled)
 
 Not a release. Pick a version when it is time; issues stay on the `backlog`
@@ -1491,3 +1548,5 @@ label until then.
 - Phone transcript: sending a message makes the transcript bob while it
   settles, and with the keyboard open it scrolls past the end
   (`apps/web/src/lib/chat/scroll-pin.svelte.ts`)
+- Archive a chat, so a room's history can be kept aside instead of staying
+  in the live transcript or being deleted with a guest

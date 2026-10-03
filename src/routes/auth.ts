@@ -22,6 +22,7 @@ import {
   setAvatarFileId,
 } from '../auth';
 import { can } from '../authz';
+import { iceServersFor } from '../ice';
 import { isUserColor } from '../colors';
 import { deleteOtherSessions, deleteSession, hashSessionToken } from '../sessions';
 import { createFileRecord, deleteOrphanFile, getFileRecord } from '../db';
@@ -31,7 +32,6 @@ import {
   perUserRateLimit,
   AVATAR_TYPES,
   extractToken,
-  parseIceServers,
   resolveSession,
   resolveUser,
   RouteContext,
@@ -181,7 +181,7 @@ export async function authRoutes(fastify: FastifyInstance, ctx: RouteContext): P
       return { error: 'authentication required' };
     }
 
-    return { iceServers: parseIceServers(process.env.HERMES_ICE_SERVERS) };
+    return { iceServers: iceServersFor(username) };
   });
 
   fastify.get('/users/me', async (request, reply) => {
