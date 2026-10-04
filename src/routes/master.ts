@@ -6,7 +6,7 @@ import {
   admitGuest,
   assertInviteRooms,
   createInvite,
-  isGatewayOpen,
+  gatewayView,
   listInvites,
   listOpenGuests,
   normalizeInviteLimits,
@@ -24,6 +24,7 @@ const createInviteSchema = z.object({
 
 const gatewaySchema = z.object({
   open: z.boolean(),
+  hours: z.number().int().optional(),
 });
 
 export async function masterRoutes(fastify: FastifyInstance, ctx: RouteContext): Promise<void> {
@@ -45,7 +46,7 @@ export async function masterRoutes(fastify: FastifyInstance, ctx: RouteContext):
     if (!master) {
       return { error: reply.statusCode === 403 ? 'forbidden' : 'authentication required' };
     }
-    return { open: isGatewayOpen(), port: gatewayPort() };
+    return { ...gatewayView(), port: gatewayPort() };
   });
 
   fastify.post('/gateway', async (request, reply) => {
@@ -56,11 +57,18 @@ export async function masterRoutes(fastify: FastifyInstance, ctx: RouteContext):
     const parsed = gatewaySchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: 'open is required' };
+      const hoursIssue = parsed.error.issues.some((issue) => issue.path.includes('hours'));
+      return { error: hoursIssue ? 'hours must be from 1 to 168' : 'open is required' };
     }
-    setGatewayOpen(parsed.data.open);
-    request.log.info({ event: 'gateway_open', user: master.username, open: parsed.data.open }, 'gateway switch');
-    return { open: parsed.data.open, port: gatewayPort() };
+    let view;
+    try {
+      view = setGatewayOpen(parsed.data.open, parsed.data.hours);
+    } catch (error) {
+      reply.code(400);
+      return { error: (error as Error).message };
+    }
+    request.log.info({ event: 'gateway_open', user: master.username, open: view.open }, 'gateway switch');
+    return { ...view, port: gatewayPort() };
   });
 
   fastify.get('/invites', async (request, reply) => {

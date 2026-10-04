@@ -30,6 +30,18 @@ import {
 } from './limits';
 import { wsFrameSchema, type LooseWsFrame } from './frames';
 
+const GUEST_FRAME_TYPES = new Set([
+  'join_room',
+  'typing',
+  'join_call',
+  'leave_call',
+  'call_offer',
+  'call_answer',
+  'ice_candidate',
+  'screen_share_start',
+  'screen_share_stop',
+]);
+
 export async function registerWsHandler(
   fastify: FastifyInstance,
   ctx: RouteContext,
@@ -257,7 +269,7 @@ export async function registerWsHandler(
           }
           const payload = parsed.data as LooseWsFrame;
 
-          if (sessionScope === 'guest' && payload.type !== 'join_room' && payload.type !== 'typing') {
+          if (sessionScope === 'guest' && !GUEST_FRAME_TYPES.has(payload.type)) {
             sendJson(socket, errorFrame('invalid message'));
             return;
           }
@@ -363,17 +375,20 @@ export async function registerWsHandler(
             const starting = (ctx.callMembers.get(slug)?.size ?? 0) === 0;
             ctx.callMembers.get(slug)?.add(user);
 
+            const roster = ctx.callRoster(slug);
             sendJson(socket, {
               type: 'call_peers',
               room: slug,
-              users: ctx.callRoster(slug),
+              users: roster,
               sharing: ctx.callSharingUser(slug),
+              guests: roster.filter((name) => getUserByUsername(name)?.role === 'guest'),
             });
             if (!already) {
+              const guest = getUserByUsername(user)?.role === 'guest';
               if (starting) {
-                ctx.broadcastToMembers(slug, { type: 'call_started', room: slug, user }, user);
+                ctx.broadcastToMembers(slug, { type: 'call_started', room: slug, user, guest }, user);
               }
-              ctx.broadcastCall(slug, { type: 'user_joined_call', room: slug, user }, user);
+              ctx.broadcastCall(slug, { type: 'user_joined_call', room: slug, user, guest }, user);
               request.log.info({ event: 'call_join', user, room: slug }, 'joined call');
             }
             ctx.touchCallAloneTimer(slug);

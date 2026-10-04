@@ -74,6 +74,16 @@ function requireGuest(
   return { username: session.username, status };
 }
 
+function liveGuest(request: FastifyRequest): boolean {
+  const token = readCookie(request.headers.cookie, GUEST_COOKIE);
+  const session = findSession(token);
+  if (!session || session.scope !== 'guest') {
+    return false;
+  }
+  const status = guestStatus(session.username);
+  return status === 'waiting' || status === 'admitted';
+}
+
 function isGatewayApi(url: string): boolean {
   const pathname = url.split('?')[0] || '/';
   return GATEWAY_API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -123,10 +133,19 @@ export async function createGateway(
     requestIdHeader: 'x-request-id',
   });
 
-  gateway.addHook('onRequest', async (_request, reply) => {
-    if (!isGatewayOpen()) {
+  gateway.addHook('onRequest', async (request, reply) => {
+    if (isGatewayOpen()) {
+      return;
+    }
+    const pathname = request.url.split('?')[0] || '/';
+    // Closing the page refuses a new join. A guest already inside keeps the session.
+    if (request.method === 'POST' && pathname === '/join') {
       return reply.code(404).send({ error: 'Not Found' });
     }
+    if (liveGuest(request)) {
+      return;
+    }
+    return reply.code(404).send({ error: 'Not Found' });
   });
 
   registerSecurityHeaders(gateway);
