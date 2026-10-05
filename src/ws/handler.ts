@@ -49,6 +49,17 @@ export async function registerWsHandler(
 ): Promise<void> {
   const audience = options.audience ?? 'member';
   const lastPong = new WeakMap<object, number>();
+  // The member app and the guest gateway share call state, but each keeps its
+  // own pong timestamps. A ping may only cover sockets this listener accepted.
+  const ownedSockets = new Set<object>();
+
+  function pingIntervalMs(): number {
+    const raw = Number(process.env.HERMES_WS_PING_INTERVAL_MS);
+    if (Number.isInteger(raw) && raw >= 50 && raw <= PING_INTERVAL_MS) {
+      return raw;
+    }
+    return PING_INTERVAL_MS;
+  }
 
   function attachUserSocket(
     user: string,
@@ -155,6 +166,7 @@ export async function registerWsHandler(
     },
     (connection: unknown, request: FastifyRequest) => {
       const socket = unwrapSocket(connection);
+      ownedSockets.add(socket);
       let room: string | null = null;
       const authed = request as FastifyRequest & {
         username?: string;
@@ -760,6 +772,7 @@ export async function registerWsHandler(
           { err: error, event: 'ws_error', user, room: room ?? undefined },
           'websocket error'
         );
+        ownedSockets.delete(socket);
         leaveCurrentRoom();
         detachUserSocket(userEntry);
         userEntry = null;
@@ -770,6 +783,7 @@ export async function registerWsHandler(
           { event: 'ws_disconnect', user, room: room ?? undefined },
           'websocket disconnected'
         );
+        ownedSockets.delete(socket);
         leaveCurrentRoom();
         detachUserSocket(userEntry);
         userEntry = null;
@@ -801,6 +815,9 @@ export async function registerWsHandler(
 
     for (const sockets of ctx.userSockets.values()) {
       for (const entry of [...sockets]) {
+        if (!ownedSockets.has(entry.socket)) {
+          continue;
+        }
         if (entry.sessionHash && !sessionIsLive(entry.sessionHash)) {
           try {
             entry.socket.close?.(4001, 'session ended');
@@ -822,10 +839,13 @@ export async function registerWsHandler(
 
     for (const clients of ctx.roomClients.values()) {
       for (const client of [...clients]) {
+        if (!ownedSockets.has(client.socket)) {
+          continue;
+        }
         pingOne(client.socket, () => dropClient(client));
       }
     }
-  }, PING_INTERVAL_MS);
+  }, pingIntervalMs());
 
   pingTimer.unref();
   fastify.addHook('onClose', async () => {
@@ -848,12 +868,16 @@ export async function registerWsHandler(
     };
     for (const sockets of ctx.userSockets.values()) {
       for (const entry of sockets) {
-        goodbye(entry.socket);
+        if (ownedSockets.has(entry.socket)) {
+          goodbye(entry.socket);
+        }
       }
     }
     for (const clients of ctx.roomClients.values()) {
       for (const client of clients) {
-        goodbye(client.socket);
+        if (ownedSockets.has(client.socket)) {
+          goodbye(client.socket);
+        }
       }
     }
   });
