@@ -10,10 +10,16 @@ import { isUsername } from './text';
 
 export const DEFAULT_INVITE_USES = 1;
 export const DEFAULT_INVITE_HOURS = 24;
+export const DEFAULT_GATEWAY_HOURS = 4;
 export const GUEST_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 const MAX_USES = 20;
 const MAX_HOURS = 24 * 7;
+
+export type GatewayView = {
+  open: boolean;
+  closesAt: string | null;
+};
 
 export type InviteSummary = {
   id: number;
@@ -53,17 +59,59 @@ function roomsForGuest(userId: number): string[] {
   ).map((row) => row.room_slug);
 }
 
-export function isGatewayOpen(): boolean {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = 'gateway_open'").get() as
-    | { value: string }
-    | undefined;
-  return row?.value === '1';
+function readSetting(key: string): string | undefined {
+  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+  return row?.value;
 }
 
-export function setGatewayOpen(open: boolean): void {
+function writeSetting(key: string, value: string): void {
   getDb()
     .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run('gateway_open', open ? '1' : '0');
+    .run(key, value);
+}
+
+function clearSetting(key: string): void {
+  getDb().prepare('DELETE FROM settings WHERE key = ?').run(key);
+}
+
+/** Open only until the stored close time. A restart cannot leave the page open past it. */
+export function gatewayView(now = Date.now()): GatewayView {
+  const flagged = readSetting('gateway_open') === '1';
+  const raw = readSetting('gateway_closes_at');
+  const closesMs = raw ? Date.parse(raw) : NaN;
+  if (!flagged || !raw || !Number.isFinite(closesMs) || closesMs <= now) {
+    if (flagged || raw) {
+      writeSetting('gateway_open', '0');
+      clearSetting('gateway_closes_at');
+    }
+    return { open: false, closesAt: null };
+  }
+  return { open: true, closesAt: new Date(closesMs).toISOString() };
+}
+
+export function isGatewayOpen(now = Date.now()): boolean {
+  return gatewayView(now).open;
+}
+
+export function normalizeGatewayHours(hours: number | undefined): number {
+  const value = hours ?? DEFAULT_GATEWAY_HOURS;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_HOURS) {
+    throw new Error('hours must be from 1 to 168');
+  }
+  return value;
+}
+
+export function setGatewayOpen(open: boolean, hours?: number, now = Date.now()): GatewayView {
+  if (!open) {
+    writeSetting('gateway_open', '0');
+    clearSetting('gateway_closes_at');
+    return { open: false, closesAt: null };
+  }
+  const span = normalizeGatewayHours(hours);
+  const closesAt = new Date(now + span * 60 * 60 * 1000).toISOString();
+  writeSetting('gateway_open', '1');
+  writeSetting('gateway_closes_at', closesAt);
+  return { open: true, closesAt };
 }
 
 export function normalizeInviteLimits(input: { maxUses?: number; expiresInHours?: number }): {

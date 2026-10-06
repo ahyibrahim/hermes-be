@@ -7,7 +7,7 @@ with no ORM; and `hermes-fe`, an npm workspaces monorepo with `@hermes/core`, a
 TypeScript readline CLI, and a static SvelteKit web UI served by hermes-be.
 
 This file is the source of truth for release scope. It covers v0.2.0 through
-v0.31.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
+v0.32.0. GitHub issues in both repos are grouped with `release:vX.Y.Z` labels, or
 `backlog` when they have no target release, and should trace back to a bullet
 here. When scope moves between releases, it moves here first.
 
@@ -49,7 +49,8 @@ Architecture decisions live in [adr/](adr/):
 - [x] v0.28.0 - Hardening: previews, removal, input (live on `p1`)
 - [x] v0.29.0 - Platform and supply chain (live on `p1`)
 - [x] v0.30.0 - Sessions, roles, and scoping
-- [ ] v0.31.0 - Gateway, dark launch
+- [x] v0.31.0 - Gateway, dark launch (live on `p1`)
+- [ ] v0.32.0 - Guest access live
 - [ ] Deploy automation (backlog, was v0.5.0; blocked on [be#35](https://github.com/ahyibrahim/hermes-be/issues/35))
 
 ## Decisions locked in
@@ -1525,6 +1526,44 @@ current `main` (`hermes-be` `8b17f3f`, `hermes-fe` `49d5502`).
 - Not in scope: Funnel, auto-close of a public door, and guest voice
   (v0.32, after a hands-on pass and a review of the gateway). Announcement
   in `docs/announcements/v0.31.0.md`.
+
+## v0.32.0 - Guest access live
+
+The master can open the guest page for a limited time, and an admitted guest
+can join a call. Friends on the tailnet keep using Hermes as they do now. The
+phone transcript is unchanged from v0.27.
+
+Decided 2026-10-04. Branches `feat/v0.32.0-guest-access` in both repos, from
+current `main` (`hermes-be` `282b251`, `hermes-fe` `4298f5a`).
+
+### Locked
+
+- **Guest page.** The master sets how long the page stays open, from 1 to 168
+  hours. The default is 4. The Guests page shows when it will close. At that
+  time the page closes itself. The master can close it sooner. Guests already
+  inside stay until they are removed or the 12-hour session ends. A closed
+  page refuses new joins. Opening or closing the page does not publish the
+  port. Tailscale Serve and Funnel stay host commands. The app does not turn
+  them on or off, and it does not report Funnel status.
+- **Removal.** Same rule as v0.31. Remove asks, then deletes that guest's
+  messages and account. The 12-hour end keeps the messages and the account.
+  Either way uploads are deleted. Closing the page does not delete messages.
+- **Calls.** An admitted guest can join a call in a room they belong to. The
+  call stays the current mesh and uses the public STUN server. Before any
+  address is sent, each member confirms that the other people on this call
+  will learn their public internet address. That covers starting a call while
+  a guest is in the room, joining a call that already has a guest, and a guest
+  joining a call members are already on. Someone who stays out of the call
+  does not share an address. coturn is not deployed. The gateway does not
+  serve `/ice`.
+- **Phone transcript.** Unchanged from v0.27.
+- Tested on `q1` from the host before `p1`. `p1` is not restarted for this
+  work until that rehearsal is approved. Funnel stays off the gateway until a
+  hands-on pass on `s1` and a review of the gateway.
+- Not in scope: Tailscale controls in the app, relaying call audio through
+  the gateway, and archive a chat
+  ([be#131](https://github.com/ahyibrahim/hermes-be/issues/131)). Announcement
+  in `docs/announcements/v0.32.0.md`.
 
 ## Backlog (unscheduled)
 
